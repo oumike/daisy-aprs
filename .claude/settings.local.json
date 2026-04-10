@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"TFT_\" /Users/michael.cojocari/Projects/TDeck/daisy-aprs/src/*.cpp /Users/michael.cojocari/Projects/TDeck/daisy-aprs/src/*.h)",
+      "Bash(wc -l /Users/michael.cojocari/Projects/TDeck/daisy-aprs/src/*.cpp /Users/michael.cojocari/Projects/TDeck/daisy-aprs/src/*.h)"
+    ]
+  }
+}
