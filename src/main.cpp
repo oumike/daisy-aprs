@@ -13,8 +13,9 @@
 #include "web_config.h"
 
 namespace {
+SPIClass radioSpi(HSPI);
 SX1262 radio = new Module(BoardPins::RADIO_CS, BoardPins::RADIO_DIO1, BoardPins::RADIO_RST,
-                          BoardPins::RADIO_BUSY);
+                          BoardPins::RADIO_BUSY, radioSpi);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
 
@@ -28,14 +29,39 @@ uint32_t lastBatterySampleMs = 0;
 constexpr uint8_t kTouchI2cAddress = 0x2E;
 constexpr uint32_t kTouchPollIntervalMs = 25;
 constexpr uint32_t kTouchDebounceMs = 180;
+constexpr uint32_t kTouchButtonLockoutMs = 5000;
 constexpr uint16_t kTouchReadBytes = 16;
 constexpr int16_t kUiScreenWidth = 320;
 constexpr int16_t kUiScreenHeight = 240;
+constexpr int16_t kMainPanelW = kUiScreenWidth - 16;
+constexpr int16_t kScreenToggleButtonW = 84;
+constexpr int16_t kScreenToggleButtonH = 16;
+constexpr int16_t kScreenToggleButtonX = kUiScreenWidth - kScreenToggleButtonW - 14;
+constexpr int16_t kScreenToggleButtonY = 34;
+constexpr int16_t kActionButtonGap = 4;
+constexpr int16_t kActionButtonW = ((kMainPanelW - 16) - (3 * kActionButtonGap)) / 4;
+constexpr int16_t kBeaconButtonX = 16;
+constexpr int16_t kBeaconButtonY = 173;
+constexpr int16_t kBeaconButtonW = kActionButtonW;
+constexpr int16_t kBeaconButtonH = 22;
+constexpr int16_t kTestButtonX = kBeaconButtonX + kBeaconButtonW + kActionButtonGap;
+constexpr int16_t kTestButtonY = kBeaconButtonY;
+constexpr int16_t kTestButtonW = kActionButtonW;
+constexpr int16_t kTestButtonH = kBeaconButtonH;
+constexpr int16_t kAprsphButtonX = kTestButtonX + kTestButtonW + kActionButtonGap;
+constexpr int16_t kAprsphButtonY = kBeaconButtonY;
+constexpr int16_t kAprsphButtonW = kActionButtonW;
+constexpr int16_t kAprsphButtonH = kBeaconButtonH;
+constexpr int16_t kWxButtonX = kAprsphButtonX + kAprsphButtonW + kActionButtonGap;
+constexpr int16_t kWxButtonY = kBeaconButtonY;
+constexpr int16_t kWxButtonW = kActionButtonW;
+constexpr int16_t kWxButtonH = kBeaconButtonH;
 constexpr uint32_t kBatterySampleIntervalMs = 10000;
 
 TwoWire touchWire(1);
 uint32_t lastTouchPollMs = 0;
 uint32_t lastTouchActionMs = 0;
+uint32_t touchButtonLockoutUntilMs = 0;
 bool touchOnline = false;
 bool touchWasDown = false;
 bool radioReady = false;
@@ -47,8 +73,12 @@ String serialLine;
 bool sendBeaconNow();
 bool sendBeaconWithPosition(double lat, double lon, double courseDeg, double speedKnots,
                             long altitudeFeet);
+void sendTestPacket();
+void sendAprsphPacket();
+void sendWxBotPacket();
 void openConversationsFromMain();
 void openMainFromConversations();
+bool handleLogScreenTouch(int16_t x, int16_t y);
 void transmitAprs(const String& aprsText);
 void applyRuntimeRadioConfig();
 void onWebConfigSaved();
@@ -64,46 +94,6 @@ void restoreDisplaySpiAfterRadioFailure() {
 #endif
 }
 
-const char* wifiModeName(wifi_mode_t mode) {
-  switch (mode) {
-    case WIFI_MODE_NULL:
-      return "NULL";
-    case WIFI_MODE_STA:
-      return "STA";
-    case WIFI_MODE_AP:
-      return "AP";
-    case WIFI_MODE_APSTA:
-      return "APSTA";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-const char* wifiStatusName(wl_status_t status) {
-  switch (status) {
-    case WL_IDLE_STATUS:
-      return "IDLE";
-    case WL_NO_SSID_AVAIL:
-      return "NO_SSID";
-    case WL_SCAN_COMPLETED:
-      return "SCAN_DONE";
-    case WL_CONNECTED:
-      return "CONNECTED";
-    case WL_CONNECT_FAILED:
-      return "CONNECT_FAILED";
-    case WL_CONNECTION_LOST:
-      return "CONNECTION_LOST";
-    case WL_DISCONNECTED:
-      return "DISCONNECTED";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-bool ipEquals(const IPAddress& a, const IPAddress& b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
-}
-
 bool ipIsZero(const IPAddress& ip) {
   return ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0;
 }
@@ -112,63 +102,10 @@ bool ipIsApDefault(const IPAddress& ip) {
   return ip[0] == 192 && ip[1] == 168 && ip[2] == 4 && ip[3] == 1;
 }
 
-void logWifiDecision(const char* reason,
-                     wifi_mode_t mode,
-                     wl_status_t status,
-                     const IPAddress& staIp,
-                     const IPAddress& apIp,
-                     bool webRunning,
-                     bool webApMode,
-                     bool uiConnected,
-                     bool uiApMode,
-                     bool force = false) {
-  static bool initialized = false;
-  static wifi_mode_t lastMode = WIFI_MODE_NULL;
-  static wl_status_t lastStatus = WL_IDLE_STATUS;
-  static IPAddress lastStaIp(0, 0, 0, 0);
-  static IPAddress lastApIp(0, 0, 0, 0);
-  static bool lastWebRunning = false;
-  static bool lastWebApMode = false;
-  static bool lastUiConnected = false;
-  static bool lastUiApMode = false;
-  static uint32_t lastLogMs = 0;
-
-  const uint32_t now = millis();
-  const bool changed = !initialized || lastMode != mode || lastStatus != status ||
-                       !ipEquals(lastStaIp, staIp) || !ipEquals(lastApIp, apIp) ||
-                       lastWebRunning != webRunning || lastWebApMode != webApMode ||
-                       lastUiConnected != uiConnected || lastUiApMode != uiApMode;
-  const bool heartbeat = initialized && (now - lastLogMs >= 10000);
-
-  if (!force && !changed && !heartbeat) {
-    return;
-  }
-
-  Serial.printf(
-      "[WIFI-DBG] reason=%s mode=%s(%d) status=%s(%d) staIp=%u.%u.%u.%u apIp=%u.%u.%u.%u "
-      "webRunning=%d webAp=%d uiConnected=%d uiAp=%d\n",
-      reason, wifiModeName(mode), static_cast<int>(mode), wifiStatusName(status),
-      static_cast<int>(status), staIp[0], staIp[1], staIp[2], staIp[3], apIp[0], apIp[1], apIp[2],
-      apIp[3], webRunning ? 1 : 0, webApMode ? 1 : 0, uiConnected ? 1 : 0,
-      uiApMode ? 1 : 0);
-
-  initialized = true;
-  lastMode = mode;
-  lastStatus = status;
-  lastStaIp = staIp;
-  lastApIp = apIp;
-  lastWebRunning = webRunning;
-  lastWebApMode = webApMode;
-  lastUiConnected = uiConnected;
-  lastUiApMode = uiApMode;
-  lastLogMs = now;
-}
-
 void updateWifiUiStateFromSystem() {
   const wifi_mode_t mode = WiFi.getMode();
   const wl_status_t status = WiFi.status();
   const IPAddress staIp = WiFi.localIP();
-  const IPAddress apIp = WiFi.softAPIP();
 
   const bool webRunning = webConfigRunning();
   const bool webApMode = webRunning && webConfigIsApMode();
@@ -181,8 +118,6 @@ void updateWifiUiStateFromSystem() {
   const bool uiConnected = webRunning ? true : (apMode || staConnected || hasRealStaIp);
 
   UI::setWifiState(uiConnected, uiApMode);
-  logWifiDecision("update", mode, status, staIp, apIp, webRunning, webApMode, uiConnected,
-                  uiApMode);
 }
 
 int readTouchRaw(uint8_t* buffer, uint8_t length) {
@@ -271,14 +206,31 @@ int readBatteryPercent() {
   }
 
   constexpr int kSamples = 8;
-  uint32_t sum = 0;
+  uint32_t sumMv = 0;
+  int validMvSamples = 0;
   for (int i = 0; i < kSamples; ++i) {
-    sum += static_cast<uint32_t>(analogRead(BoardPins::BATTERY_ADC));
+    const uint32_t mv = analogReadMilliVolts(BoardPins::BATTERY_ADC);
+    if (mv > 0) {
+      sumMv += mv;
+      ++validMvSamples;
+    }
     delayMicroseconds(200);
   }
 
-  const float raw = static_cast<float>(sum) / static_cast<float>(kSamples);
-  const float vadc = raw * (3.3f / 4095.0f);
+  float vadc = 0.0f;
+  if (validMvSamples > 0) {
+    vadc = (static_cast<float>(sumMv) / static_cast<float>(validMvSamples)) / 1000.0f;
+  } else {
+    // Fallback for boards/cores where calibrated millivolt reads are unavailable.
+    uint32_t sumRaw = 0;
+    for (int i = 0; i < kSamples; ++i) {
+      sumRaw += static_cast<uint32_t>(analogRead(BoardPins::BATTERY_ADC));
+      delayMicroseconds(200);
+    }
+    const float raw = static_cast<float>(sumRaw) / static_cast<float>(kSamples);
+    vadc = raw * (3.1f / 4095.0f);
+  }
+
   const float vbat = vadc * BoardPins::BATTERY_DIVIDER;
   const float ratio = (vbat - BoardPins::BATTERY_VMIN) /
                       (BoardPins::BATTERY_VMAX - BoardPins::BATTERY_VMIN);
@@ -314,39 +266,128 @@ void initTouchInput() {
   }
 }
 
-void handleMainScreenTouch(int16_t x, int16_t y) {
-  if (y < 56) {
-    if (x < (kUiScreenWidth / 2)) {
-      sendBeaconNow();
-      Serial.println("[UI] touch: beacon send");
-    } else {
-      openConversationsFromMain();
-      Serial.println("[UI] touch: open conversations");
-    }
+bool isBeaconButtonTouch(int16_t x, int16_t y) {
+  return x >= kBeaconButtonX && x < (kBeaconButtonX + kBeaconButtonW) && y >= kBeaconButtonY &&
+         y < (kBeaconButtonY + kBeaconButtonH);
+}
+
+bool isScreenToggleButtonTouch(int16_t x, int16_t y) {
+  return x >= kScreenToggleButtonX && x < (kScreenToggleButtonX + kScreenToggleButtonW) &&
+         y >= kScreenToggleButtonY && y < (kScreenToggleButtonY + kScreenToggleButtonH);
+}
+
+bool isTestButtonTouch(int16_t x, int16_t y) {
+  return x >= kTestButtonX && x < (kTestButtonX + kTestButtonW) && y >= kTestButtonY &&
+         y < (kTestButtonY + kTestButtonH);
+}
+
+bool isAprsphButtonTouch(int16_t x, int16_t y) {
+  return x >= kAprsphButtonX && x < (kAprsphButtonX + kAprsphButtonW) &&
+         y >= kAprsphButtonY && y < (kAprsphButtonY + kAprsphButtonH);
+}
+
+bool isWxButtonTouch(int16_t x, int16_t y) {
+  return x >= kWxButtonX && x < (kWxButtonX + kWxButtonW) && y >= kWxButtonY &&
+         y < (kWxButtonY + kWxButtonH);
+}
+
+bool handleMainScreenTouch(int16_t x, int16_t y) {
+  if (isScreenToggleButtonTouch(x, y)) {
+    UI::nextScreen();
+    Serial.println("[UI] touch: toggle main/log");
+    UI::render();
+    return false;
+  }
+
+  if (isBeaconButtonTouch(x, y)) {
+    UI::flashButton(UI::TouchButton::Beacon);
     UI::render(true);
-    return;
+    sendBeaconNow();
+    Serial.println("[UI] touch: beacon send");
+    UI::render();
+    return true;
+  }
+
+  if (isTestButtonTouch(x, y)) {
+    UI::flashButton(UI::TouchButton::Test);
+    UI::render(true);
+    sendTestPacket();
+    Serial.println("[UI] touch: test send");
+    UI::render();
+    return true;
+  }
+
+  if (isAprsphButtonTouch(x, y)) {
+    UI::flashButton(UI::TouchButton::Aprsph);
+    UI::render(true);
+    sendAprsphPacket();
+    Serial.println("[UI] touch: APRSPH send");
+    UI::render();
+    return true;
+  }
+
+  if (isWxButtonTouch(x, y)) {
+    UI::flashButton(UI::TouchButton::Wx);
+    UI::render(true);
+    sendWxBotPacket();
+    Serial.println("[UI] touch: WX send");
+    UI::render();
+    return true;
+  }
+
+  return false;
+}
+
+bool handleLogScreenTouch(int16_t x, int16_t y) {
+  if (UI::isLogDetailActive()) {
+    if (UI::handleLogDetailTouch(x, y)) {
+      Serial.println("[UI] touch: close log detail");
+      UI::render();
+      return false;
+    }
+    return false;
+  }
+
+  if (isScreenToggleButtonTouch(x, y)) {
+    UI::nextScreen();
+    Serial.println("[UI] touch: toggle main/log");
+    UI::render();
+    return false;
+  }
+
+  if (UI::handleLogScrollButtonTouch(x, y)) {
+    Serial.println("[UI] touch: log scroll button");
+    UI::render();
+    return false;
+  }
+
+  if (UI::openLogDetailAt(x, y)) {
+    Serial.println("[UI] touch: open log detail");
+    UI::render();
+    return false;
   }
 
   if (y > (kUiScreenHeight - 36)) {
     if (x < (kUiScreenWidth / 2)) {
-      UI::scrollRxPageNewer();
-      Serial.println("[UI] touch: rx page newer");
+      UI::scrollLogPageNewer();
+      Serial.println("[UI] touch: log page newer");
     } else {
-      UI::scrollRxPageOlder();
-      Serial.println("[UI] touch: rx page older");
+      UI::scrollLogPageOlder();
+      Serial.println("[UI] touch: log page older");
     }
-    UI::render(true);
-    return;
+    UI::render();
+    return false;
   }
 
   if (x < (kUiScreenWidth / 2)) {
-    UI::scrollRxNewer();
-    Serial.println("[UI] touch: rx newer");
+    UI::scrollLogNewer();
+    Serial.println("[UI] touch: log newer");
   } else {
-    UI::scrollRxOlder();
-    Serial.println("[UI] touch: rx older");
+    UI::scrollLogOlder();
+    Serial.println("[UI] touch: log older");
   }
-  UI::render(true);
+  UI::render();
+  return false;
 }
 
 void pollTouchInput() {
@@ -378,6 +419,10 @@ void pollTouchInput() {
     return;
   }
 
+  if (static_cast<int32_t>(touchButtonLockoutUntilMs - now) > 0) {
+    return;
+  }
+
   int16_t x = 0;
   int16_t y = 0;
   if (!mapTouchToUi(rawX, rawY, &x, &y)) {
@@ -386,12 +431,14 @@ void pollTouchInput() {
 
   lastTouchActionMs = now;
   if (UI::currentScreen() == UI::Screen::Conversations) {
-    openMainFromConversations();
-    Serial.println("[UI] touch: back to Main");
+    handleLogScreenTouch(x, y);
     return;
   }
 
-  handleMainScreenTouch(x, y);
+  const bool buttonHandled = handleMainScreenTouch(x, y);
+  if (buttonHandled) {
+    touchButtonLockoutUntilMs = now + kTouchButtonLockoutMs;
+  }
 }
 
 void onRadioIrq() { radioIrqFired = true; }
@@ -426,7 +473,7 @@ void openConversationsFromMain() {
 
   UI::showScreen(UI::Screen::Conversations);
   UI::render(true);
-  Serial.println("[UI] opened Conversations screen");
+  Serial.println("[UI] opened LOG screen");
 }
 
 void openMainFromConversations() {
@@ -436,10 +483,13 @@ void openMainFromConversations() {
 
   UI::showScreen(UI::Screen::Main);
   UI::render(true);
-  Serial.println("[UI] touch back: Main screen");
+  Serial.println("[UI] LOG -> Main screen");
 }
 
 bool initRadio() {
+  radioSpi.begin(BoardPins::RADIO_SCLK, BoardPins::RADIO_MISO, BoardPins::RADIO_MOSI,
+                 BoardPins::RADIO_CS);
+
   int state = radio.begin(gRuntimeCfg.frequencyMhz);
   if (state != RADIOLIB_ERR_NONE) {
     Serial.printf("[LORA] init failed, code %d\n", state);
@@ -533,6 +583,9 @@ void transmitAprs(const String& aprsText) {
     return;
   }
 
+  // Ignore any stale IRQ raised by previous radio events before a new TX.
+  radioIrqFired = false;
+
   String wire = addWirePrefix(aprsText);
 
   Serial.printf("[TX] %s\n", aprsText.c_str());
@@ -542,6 +595,9 @@ void transmitAprs(const String& aprsText) {
     Serial.printf("[TX] failed, code %d\n", state);
     UI::noteStatus("tx failed");
   }
+
+  // TX done can also toggle DIO1; clear it before we resume RX handling.
+  radioIrqFired = false;
 
   state = radio.startReceive();
   if (state != RADIOLIB_ERR_NONE) {
@@ -571,6 +627,11 @@ void handleRadioRx() {
     return;
   }
 
+  if (payload.length() == 0) {
+    radio.startReceive();
+    return;
+  }
+
   const float rssi = radio.getRSSI();
   const float snr = radio.getSNR();
 
@@ -592,6 +653,74 @@ String buildCurrentBeacon() {
       gps.location.lat(), gps.location.lng(), gps.course.deg(), gps.speed.knots(),
       static_cast<long>(gps.altitude.feet()), gRuntimeCfg.symbolTable, gRuntimeCfg.symbol,
       String(gRuntimeCfg.comment));
+}
+
+String buildAprsMessagePacket(const String& addressee, const String& messageText) {
+  String to = AprsCodec::normalizeCallsign(addressee);
+  if (to.length() > 9) {
+    to = to.substring(0, 9);
+  }
+  while (to.length() < 9) {
+    to += ' ';
+  }
+
+  String path = String(gRuntimeCfg.path);
+  path.trim();
+  if (path.length() == 0) {
+    path = "WIDE1-1";
+  }
+
+  String packet;
+  packet.reserve(180);
+  packet += AprsCodec::normalizeCallsign(String(gRuntimeCfg.callsign));
+  packet += '>';
+  packet += "APRS";
+  packet += ',';
+  packet += path;
+
+  packet += "::";
+  packet += to;
+  packet += ':';
+  packet += messageText;
+  return packet;
+}
+
+void sendTestPacket() {
+  transmitAprs(buildAprsMessagePacket("APRSPH", "test"));
+  UI::noteStatus("test sent to APRSPH");
+}
+
+void sendAprsphPacket() {
+  String message = String(gRuntimeCfg.aprsphMessage);
+  message.trim();
+  if (message.length() == 0) {
+    message = String(AppConfig::kAprsphMessage);
+  }
+
+  transmitAprs(buildAprsMessagePacket("APRSPH", message));
+  UI::noteStatus("APRSPH message sent");
+}
+
+void sendWxBotPacket() {
+  double lat = 0.0;
+  double lon = 0.0;
+
+  if (gps.location.isValid()) {
+    lat = gps.location.lat();
+    lon = gps.location.lng();
+  } else if (gRuntimeCfg.allowManualPosition) {
+    lat = static_cast<double>(gRuntimeCfg.manualLatE7) / 1e7;
+    lon = static_cast<double>(gRuntimeCfg.manualLonE7) / 1e7;
+  } else {
+    Serial.println("[WX] no GPS/manual position available, request not sent");
+    UI::noteStatus("wx: no position");
+    return;
+  }
+
+  char where[40];
+  snprintf(where, sizeof(where), "%.3f/%.3f", lat, lon);
+  transmitAprs(buildAprsMessagePacket("WXBOT", String(where)));
+  UI::noteStatus("wx request sent");
 }
 
 bool sendBeaconWithPosition(double lat,
@@ -661,11 +790,11 @@ void printStatus() {
   Serial.printf("[STATUS] gps.valid=%d sats=%d lat=%.6f lon=%.6f speed=%.1fkmh\n",
                 gps.location.isValid() ? 1 : 0, gps.satellites.value(), gps.location.lat(),
                 gps.location.lng(), gps.speed.kmph());
-  Serial.printf("[STATUS] aprs=%s>%s,%s freq=%.3f sf=%d bw=%.1f cr=%d pwr=%d bcn=%lus\n",
+  Serial.printf("[STATUS] aprs=%s>%s,%s freq=%.3f sf=%d bw=%.1f cr=%d pwr=%d bcn=%lumin\n",
                 gRuntimeCfg.callsign, gRuntimeCfg.destination, gRuntimeCfg.path,
                 gRuntimeCfg.frequencyMhz, gRuntimeCfg.spreadingFactor, gRuntimeCfg.bandwidthKhz,
                 gRuntimeCfg.codingRate, gRuntimeCfg.txPowerDbm,
-                static_cast<unsigned long>(gRuntimeCfg.beaconIntervalMs / 1000UL));
+                static_cast<unsigned long>(gRuntimeCfg.beaconIntervalMs / 60000UL));
 
   if (webConfigRunning()) {
     Serial.printf("[STATUS] web mode=%s ip=%s ssid=%s\n",
@@ -692,40 +821,21 @@ void handleSerialLine(const String& line) {
     Serial.println("Commands:");
     Serial.println("  help                 Show this help");
     Serial.println("  status               Show GPS and runtime status");
-    Serial.println("  wifi                 Show detailed Wi-Fi state");
     Serial.println("  web                  Show web config URL and mode");
     Serial.println("  beacon               Send APRS beacon now (if GPS fix is valid)");
-    Serial.println("  c                    Toggle Main and Conversations screens");
-    Serial.println("  screen next|prev     Switch between Main and Conversations");
-    Serial.println("  screen main|convos   Jump to a specific screen");
+    Serial.println("  c                    Toggle Main and LOG screens");
+    Serial.println("  screen next|prev     Switch between Main and LOG");
+    Serial.println("  screen main|log      Jump to a specific screen");
     Serial.println("  enter                On Main screen: send beacon now");
     Serial.println("  tx <TNC2_PACKET>     Send a raw APRS packet");
-    Serial.println("  scroll newer|older   Scroll Main RX list by one entry");
-    Serial.println("  scroll pageup|pagedown  Scroll Main RX list by one page");
-    Serial.println("  scroll top           Jump Main RX list to newest entry");
+    Serial.println("  scroll newer|older   Scroll LOG by one entry");
+    Serial.println("  scroll pageup|pagedown  Scroll LOG by one page");
+    Serial.println("  scroll top           Jump LOG to newest entry");
     return;
   }
 
   if (line == "status") {
     printStatus();
-    return;
-  }
-
-  if (line == "wifi") {
-    const wifi_mode_t mode = WiFi.getMode();
-    const wl_status_t status = WiFi.status();
-    const IPAddress staIp = WiFi.localIP();
-    const IPAddress apIp = WiFi.softAPIP();
-    const bool webRunning = webConfigRunning();
-    const bool webApMode = webRunning && webConfigIsApMode();
-    const bool apMode = (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA);
-    const bool staConnected = (status == WL_CONNECTED);
-    const bool hasRealStaIp = !ipIsZero(staIp) && !ipIsApDefault(staIp);
-    const bool uiApMode = webRunning ? webApMode : apMode;
-    const bool uiConnected = webRunning ? true : (apMode || staConnected || hasRealStaIp);
-
-    logWifiDecision("cmd", mode, status, staIp, apIp, webRunning, webApMode, uiConnected,
-                    uiApMode, true);
     return;
   }
 
@@ -779,10 +889,11 @@ void handleSerialLine(const String& line) {
     return;
   }
 
-  if (line == "screen convos" || line == "screen conversations") {
+  if (line == "screen log" || line == "screen logs" || line == "screen convos" ||
+      line == "screen conversations") {
     UI::showScreen(UI::Screen::Conversations);
     UI::render(true);
-    Serial.println("[UI] switched to Conversations screen");
+    Serial.println("[UI] switched to LOG screen");
     return;
   }
 
@@ -790,7 +901,7 @@ void handleSerialLine(const String& line) {
     if (UI::currentScreen() == UI::Screen::Main) {
       sendBeaconNow();
     } else {
-      Serial.println("[UI] enter has no action on Conversations screen");
+      Serial.println("[UI] enter has no action on LOG screen");
     }
     return;
   }
@@ -806,37 +917,37 @@ void handleSerialLine(const String& line) {
   }
 
   if (line == "scroll newer" || line == "scroll up") {
-    UI::scrollRxNewer();
+    UI::scrollLogNewer();
     UI::render(true);
-    Serial.println("[UI] rx list scrolled newer");
+    Serial.println("[UI] LOG scrolled newer");
     return;
   }
 
   if (line == "scroll older" || line == "scroll down") {
-    UI::scrollRxOlder();
+    UI::scrollLogOlder();
     UI::render(true);
-    Serial.println("[UI] rx list scrolled older");
+    Serial.println("[UI] LOG scrolled older");
     return;
   }
 
   if (line == "scroll pageup") {
-    UI::scrollRxPageNewer();
+    UI::scrollLogPageNewer();
     UI::render(true);
-    Serial.println("[UI] rx list page up");
+    Serial.println("[UI] LOG page newer");
     return;
   }
 
   if (line == "scroll pagedown") {
-    UI::scrollRxPageOlder();
+    UI::scrollLogPageOlder();
     UI::render(true);
-    Serial.println("[UI] rx list page down");
+    Serial.println("[UI] LOG page older");
     return;
   }
 
   if (line == "scroll top") {
-    UI::resetRxScroll();
+    UI::resetLogScroll();
     UI::render(true);
-    Serial.println("[UI] rx list reset to newest");
+    Serial.println("[UI] LOG reset to newest");
     return;
   }
 
@@ -923,13 +1034,6 @@ void setup() {
   }
 
   updateWifiUiStateFromSystem();
-  {
-    const wifi_mode_t mode = WiFi.getMode();
-    const wl_status_t status = WiFi.status();
-    logWifiDecision("setup", mode, status, WiFi.localIP(), WiFi.softAPIP(), webConfigRunning(),
-                    webConfigRunning() && webConfigIsApMode(), true,
-                    webConfigRunning() && webConfigIsApMode(), true);
-  }
 
   UI::render(true);
 }

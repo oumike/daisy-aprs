@@ -7,6 +7,7 @@ struct RuntimeConfig {
   char destination[16];
   char path[32];
   char comment[80];
+  char aprsphMessage[32];
 
   char symbolTable;
   char symbol;

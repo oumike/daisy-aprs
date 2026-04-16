@@ -60,9 +60,9 @@ Convenience script:
 - `status`
 - `web` (prints web config mode and URL)
 - `beacon`
-- `c` (toggles Main and Conversations screens)
+- `c` (toggles Main and LOG screens)
 - `screen next` / `screen prev`
-- `screen main` / `screen convos`
+- `screen main` / `screen log`
 - `enter` (sends beacon when Main screen is active)
 - `tx <TNC2_PACKET>`
 - `scroll newer` / `scroll older`
@@ -72,11 +72,12 @@ Convenience script:
 ## Hardware Navigation
 
 - Main screen touch zones:
-	- Top-left: send beacon now.
-	- Top-right: open Conversations screen.
-	- Lower-left / lower-right: page newer / older packet list.
+	- Top-right: open LOG screen.
+	- Bottom beacon button: send beacon now.
+- LOG screen touch zones:
+	- Top-left: return to Main screen.
+	- Lower-left / lower-right: page newer / older log entries.
 	- Middle-left / middle-right: scroll one entry newer / older.
-- Conversations screen: tap to return to Main screen.
 - Serial fallback remains: Enter on an empty serial command line while on Main sends a beacon.
 
 Example manual TX:

@@ -8,11 +8,12 @@ static constexpr const char* kCallsign = "N0CALL-7";
 static constexpr const char* kDestination = "APLRT1";
 static constexpr const char* kPath = "WIDE1-1";
 static constexpr const char* kComment = "Heltec V4 APRS";
+static constexpr const char* kAprsphMessage = "Net";
 
 static constexpr char kSymbolTable = '/';
 static constexpr char kSymbol = '>';
 
-static constexpr uint32_t kBeaconIntervalMs = 120000;
+static constexpr uint32_t kBeaconIntervalMs = 3600000;
 static constexpr uint32_t kNoFixLogIntervalMs = 30000;
 
 static constexpr uint32_t kSerialBaud = 115200;

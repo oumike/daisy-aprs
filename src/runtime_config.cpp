@@ -47,18 +47,20 @@ void sanitize(RuntimeConfig& cfg) {
     cfg.txPowerDbm = 22;
   }
 
-  if (cfg.beaconIntervalMs < 5000) {
-    cfg.beaconIntervalMs = 5000;
+  if (cfg.beaconIntervalMs < 300000UL) {
+    cfg.beaconIntervalMs = 300000UL;
   }
-  if (cfg.noFixLogIntervalMs < 5000) {
-    cfg.noFixLogIntervalMs = 5000;
-  }
+  cfg.noFixLogIntervalMs = AppConfig::kNoFixLogIntervalMs;
 
   if (cfg.symbolTable == '\0') {
     cfg.symbolTable = AppConfig::kSymbolTable;
   }
   if (cfg.symbol == '\0') {
     cfg.symbol = AppConfig::kSymbol;
+  }
+
+  if (cfg.aprsphMessage[0] == '\0') {
+    copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), String(AppConfig::kAprsphMessage));
   }
 }
 }  // namespace
@@ -70,6 +72,7 @@ void runtimeConfigSetDefaults(RuntimeConfig& cfg) {
   copyString(cfg.destination, sizeof(cfg.destination), String(AppConfig::kDestination));
   copyString(cfg.path, sizeof(cfg.path), String(AppConfig::kPath));
   copyString(cfg.comment, sizeof(cfg.comment), String(AppConfig::kComment));
+  copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), String(AppConfig::kAprsphMessage));
 
   cfg.symbolTable = AppConfig::kSymbolTable;
   cfg.symbol = AppConfig::kSymbol;
@@ -114,6 +117,9 @@ void runtimeConfigLoad(RuntimeConfig& cfg) {
   if (prefs.isKey("comment")) {
     copyString(cfg.comment, sizeof(cfg.comment), prefs.getString("comment", ""));
   }
+  if (prefs.isKey("aprsph_msg")) {
+    copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), prefs.getString("aprsph_msg", ""));
+  }
 
   if (prefs.isKey("symtbl")) {
     const String symTab = prefs.getString("symtbl", "");
@@ -131,9 +137,6 @@ void runtimeConfigLoad(RuntimeConfig& cfg) {
 
   if (prefs.isKey("bcn_ms")) {
     cfg.beaconIntervalMs = prefs.getULong("bcn_ms", cfg.beaconIntervalMs);
-  }
-  if (prefs.isKey("nofix_ms")) {
-    cfg.noFixLogIntervalMs = prefs.getULong("nofix_ms", cfg.noFixLogIntervalMs);
   }
 
   if (prefs.isKey("freq")) {
@@ -197,6 +200,7 @@ bool runtimeConfigSave(const RuntimeConfig& inCfg) {
   prefs.putString("dest", cfg.destination);
   prefs.putString("path", cfg.path);
   prefs.putString("comment", cfg.comment);
+  prefs.putString("aprsph_msg", cfg.aprsphMessage);
 
   char symTab[2] = {cfg.symbolTable, '\0'};
   char sym[2] = {cfg.symbol, '\0'};
@@ -204,7 +208,7 @@ bool runtimeConfigSave(const RuntimeConfig& inCfg) {
   prefs.putString("symbol", sym);
 
   prefs.putULong("bcn_ms", cfg.beaconIntervalMs);
-  prefs.putULong("nofix_ms", cfg.noFixLogIntervalMs);
+  prefs.remove("nofix_ms");
 
   prefs.putFloat("freq", cfg.frequencyMhz);
   prefs.putInt("sf", cfg.spreadingFactor);

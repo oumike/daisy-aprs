@@ -215,6 +215,9 @@ String buildConfigYaml(const RuntimeConfig& cfg) {
   y += "comment: ";
   y += yamlQuoted(String(cfg.comment));
   y += "\n";
+  y += "aprsph_message: ";
+  y += yamlQuoted(String(cfg.aprsphMessage));
+  y += "\n";
   y += "symbol_table: ";
   y += yamlQuoted(String(cfg.symbolTable));
   y += "\n";
@@ -223,9 +226,6 @@ String buildConfigYaml(const RuntimeConfig& cfg) {
   y += "\n";
   y += "beacon_interval_ms: ";
   y += String(cfg.beaconIntervalMs);
-  y += "\n";
-  y += "no_fix_log_interval_ms: ";
-  y += String(cfg.noFixLogIntervalMs);
   y += "\n";
   y += "frequency_mhz: ";
   y += String(cfg.frequencyMhz, 3);
@@ -298,6 +298,8 @@ bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut) 
       copyToArray(next.path, sizeof(next.path), normalizeRouteInput(val));
     } else if (key == "comment") {
       copyToArray(next.comment, sizeof(next.comment), val);
+    } else if (key == "aprsph_message") {
+      copyToArray(next.aprsphMessage, sizeof(next.aprsphMessage), val);
     } else if (key == "symbol_table") {
       if (val.length() > 0) {
         next.symbolTable = val[0];
@@ -308,8 +310,6 @@ bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut) 
       }
     } else if (key == "beacon_interval_ms") {
       next.beaconIntervalMs = static_cast<uint32_t>(strtoul(val.c_str(), nullptr, 10));
-    } else if (key == "no_fix_log_interval_ms") {
-      next.noFixLogIntervalMs = static_cast<uint32_t>(strtoul(val.c_str(), nullptr, 10));
     } else if (key == "frequency_mhz") {
       next.frequencyMhz = val.toFloat();
     } else if (key == "spreading_factor") {
@@ -416,6 +416,9 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "<label>Comment</label><input name='comment' maxlength='79' value='";
   html += escapeHtml(String(gCfg->comment));
   html += "'>";
+  html += "<label>APRSPH Message</label><input name='aprsph_message' maxlength='31' value='";
+  html += escapeHtml(String(gCfg->aprsphMessage));
+  html += "'>";
 
   html += "<div class='row2'>";
   html += "<div><label>Symbol Table</label><input name='symbol_table' maxlength='1' value='";
@@ -426,13 +429,9 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "'></div></div>";
 
   html += "<h3>Beacon and GPS</h3>";
-  html += "<div class='row2'>";
-  html += "<div><label>Beacon Interval (s)</label><input type='number' min='5' name='beacon_s' value='";
-  html += String(gCfg->beaconIntervalMs / 1000UL);
-  html += "'></div>";
-  html += "<div><label>No-Fix Log Interval (s)</label><input type='number' min='5' name='nofix_s' value='";
-  html += String(gCfg->noFixLogIntervalMs / 1000UL);
-  html += "'></div></div>";
+  html += "<label>Beacon Interval (minutes)</label><input type='number' min='5' name='beacon_min' value='";
+  html += String(gCfg->beaconIntervalMs / 60000UL);
+  html += "'>";
 
   html += "<label><input type='checkbox' name='manual_pos' value='1'";
   if (gCfg->allowManualPosition) {
@@ -508,6 +507,8 @@ void handleSave() {
               normalizeRouteInput(argOr("path", String(next.path))));
 
   copyToArray(next.comment, sizeof(next.comment), argOr("comment", String(next.comment)));
+  copyToArray(next.aprsphMessage, sizeof(next.aprsphMessage),
+              argOr("aprsph_message", String(next.aprsphMessage)));
 
   const String symbolTable = argOr("symbol_table", String(next.symbolTable));
   if (symbolTable.length() > 0) {
@@ -519,8 +520,7 @@ void handleSave() {
     next.symbol = symbol[0];
   }
 
-  next.beaconIntervalMs = argToULong("beacon_s", next.beaconIntervalMs / 1000UL) * 1000UL;
-  next.noFixLogIntervalMs = argToULong("nofix_s", next.noFixLogIntervalMs / 1000UL) * 1000UL;
+  next.beaconIntervalMs = argToULong("beacon_min", next.beaconIntervalMs / 60000UL) * 60000UL;
 
   next.allowManualPosition = server.hasArg("manual_pos");
   next.manualLatE7 = static_cast<int32_t>(roundf(argToFloat("lat", next.manualLatE7 / 1e7f) * 1e7f));
@@ -594,14 +594,10 @@ bool startAccessPoint() {
     WiFi.mode(WIFI_OFF);
     delay(120);
 
-    const bool modeOk = WiFi.mode(WIFI_AP);
+    WiFi.mode(WIFI_AP);
     delay(150);
     WiFi.setSleep(false);
-    const bool cfgOk = WiFi.softAPConfig(apIp, apGw, apMask);
-
-    Serial.printf("[WEB] AP attempt %d modeOk=%d cfgOk=%d mode=%d heap=%u\n", attempt + 1,
-                  modeOk ? 1 : 0, cfgOk ? 1 : 0, static_cast<int>(WiFi.getMode()),
-                  static_cast<unsigned int>(ESP.getFreeHeap()));
+    WiFi.softAPConfig(apIp, apGw, apMask);
 
     // Open AP fallback is intentionally used for maximum bring-up reliability.
     if (WiFi.softAP(gApSsid)) {
@@ -619,7 +615,6 @@ bool startAccessPoint() {
       return true;
     }
 
-    Serial.printf("[WEB] AP attempt %d failed\n", attempt + 1);
     delay(150);
   }
 

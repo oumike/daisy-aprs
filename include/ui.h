@@ -8,6 +8,17 @@ enum class Screen : uint8_t {
 	Conversations = 1,
 };
 
+enum class TouchButton : uint8_t {
+	None = 0,
+	ScreenToggle,
+	Beacon,
+	Test,
+	Aprsph,
+	Wx,
+	LogScrollUp,
+	LogScrollDown,
+};
+
 void begin();
 void showSplash(const String& title, const String& subtitle);
 void setCallsign(const String& callsign);
@@ -21,15 +32,20 @@ void setConversationComposer(bool active,
 							bool enteringMessage,
 							const String& callsign,
 							const String& message);
-void scrollRxNewer();
-void scrollRxOlder();
-void scrollRxPageNewer();
-void scrollRxPageOlder();
-void resetRxScroll();
+void scrollLogNewer();
+void scrollLogOlder();
+void scrollLogPageNewer();
+void scrollLogPageOlder();
+void resetLogScroll();
+bool openLogDetailAt(int16_t x, int16_t y);
+bool handleLogDetailTouch(int16_t x, int16_t y);
+bool isLogDetailActive();
+bool handleLogScrollButtonTouch(int16_t x, int16_t y);
 void showScreen(Screen screen);
 void nextScreen();
 void previousScreen();
 Screen currentScreen();
+void flashButton(TouchButton button);
 void noteTxPacket(const String& packet);
 void noteStatus(const String& status);
 void render(bool force = false);
