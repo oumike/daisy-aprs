@@ -1,0 +1,50 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*.*.*' ]
+
+jobs:
+  build:
+    name: PlatformIO build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e heltec-v4-tft
+
+      - name: Collect artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          mkdir -p dist
+          cp .pio/build/heltec-v4-tft/firmware.bin dist/daisy-aprs-${TAG}.bin
+          cp .pio/build/heltec-v4-tft/firmware.elf dist/daisy-aprs-${TAG}.elf
+          cp .pio/build/heltec-v4-tft/firmware.map dist/daisy-aprs-${TAG}.map 2>/dev/null || true
+
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/*.bin
+            dist/*.elf
+            dist/*.map
+            build-upload-monitor.sh

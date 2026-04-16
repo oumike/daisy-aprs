@@ -7,10 +7,28 @@ A small APRS app for the expansion kit that will allow passive monitoring and so
 - On boot, the device tries to join saved home Wi-Fi credentials.
 - If home Wi-Fi is not available, it starts its own AP automatically.
 - AP fallback credentials:
-	- SSID: `DAISY-APRS-XXXXXX` (printed in serial log)
+	- SSID: `DAISY-APRS-AP`
 	- Password: `daisyaprs`
-- Open the printed URL in a browser and save APRS + Wi-Fi settings.
-- Wi-Fi credential changes are saved immediately and applied on reboot.
+- If in AP mode, open a browser to http://192.168.4.1 otherwise use the IP address of your address.
+
+## UI 
+
+### Main Screen
+
+- Action buttons (bottom row):
+	- `BEACON`: send position beacon now.
+	- `TEST`: send APRSPH test message.
+	- `APRSPH`: send your APRSPH check-in message.
+	- `WX`: request weather from WXBOT using GPS/manual position.
+- Status badges (bottom bar):
+	- `GPS`: `NO FIX` or satellite count.
+	- `Wi-Fi`: `OFF`, `AP`, or `WIFI`.
+	- Battery: percentage with color indication.
+
+### LOG Screen
+
+- Shows recent RX/TX entries in reverse chronological order.
+- Allows tapping on a message to see full details
 
 ## Build and Flash
 

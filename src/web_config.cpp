@@ -11,7 +11,12 @@
 
 namespace {
 constexpr uint32_t kConnectTimeoutMs = 10000;
-constexpr const char* kApPassword = "daisyaprs";
+constexpr char kApSsid[] = "DAISY-APRS-AP";
+constexpr char kApPassword[] = "daisyaprs";
+static_assert((sizeof(kApPassword) - 1) >= 8,
+              "AP password must be at least 8 characters for WPA2");
+static_assert((sizeof(kApPassword) - 1) <= 63,
+              "AP password must be 63 characters or fewer");
 constexpr uint32_t kStaDropToApMs = 5000;
 
 WebServer server(80);
@@ -606,9 +611,7 @@ bool connectStation() {
 }
 
 bool startAccessPoint() {
-  const uint64_t mac = ESP.getEfuseMac();
-  const uint32_t suffix = static_cast<uint32_t>(mac & 0xFFFFFF);
-  snprintf(gApSsid, sizeof(gApSsid), "DAISY-APRS-%06lX", static_cast<unsigned long>(suffix));
+  snprintf(gApSsid, sizeof(gApSsid), "%s", kApSsid);
 
   const IPAddress apIp(192, 168, 4, 1);
   const IPAddress apGw(192, 168, 4, 1);
@@ -626,18 +629,8 @@ bool startAccessPoint() {
     WiFi.setSleep(false);
     WiFi.softAPConfig(apIp, apGw, apMask);
 
-    // Open AP fallback is intentionally used for maximum bring-up reliability.
-    if (WiFi.softAP(gApSsid)) {
-      Serial.printf("[WEB] AP started (OPEN): SSID=%s IP=%s\n", gApSsid,
-                    WiFi.softAPIP().toString().c_str());
-      return true;
-    }
-
-    // If custom SSID failed, retry with a very short SSID.
-    if (WiFi.softAP("daisy-aprs")) {
-      strncpy(gApSsid, "daisy-aprs", sizeof(gApSsid) - 1);
-      gApSsid[sizeof(gApSsid) - 1] = '\0';
-      Serial.printf("[WEB] AP started (OPEN short SSID): SSID=%s IP=%s\n", gApSsid,
+    if (WiFi.softAP(gApSsid, kApPassword)) {
+      Serial.printf("[WEB] AP started (WPA2): SSID=%s IP=%s\n", gApSsid,
                     WiFi.softAPIP().toString().c_str());
       return true;
     }

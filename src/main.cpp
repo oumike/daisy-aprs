@@ -1290,7 +1290,7 @@ void setup() {
 
   if (webConfigBegin(&gRuntimeCfg, onWebConfigSaved)) {
     if (webConfigIsApMode()) {
-      Serial.printf("[WEB] AP fallback running (OPEN): SSID=%s URL=http://%s\n", webConfigSsid(),
+      Serial.printf("[WEB] AP fallback running (WPA2): SSID=%s URL=http://%s\n", webConfigSsid(),
                     webConfigIP());
       UI::noteStatus("web cfg ap mode");
     } else {
