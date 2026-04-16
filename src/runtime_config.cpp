@@ -227,3 +227,16 @@ bool runtimeConfigSave(const RuntimeConfig& inCfg) {
   prefs.end();
   return true;
 }
+
+bool runtimeConfigFactoryReset(RuntimeConfig& cfg) {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNs, false)) {
+    return false;
+  }
+
+  prefs.clear();
+  prefs.end();
+
+  runtimeConfigSetDefaults(cfg);
+  return true;
+}

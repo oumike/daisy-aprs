@@ -1,26 +1,6 @@
 # Daisy APRS (Heltec V4 Expansion)
 
-Lean PlatformIO APRS tracker app for Heltec WiFi LoRa 32 V4 Expansion Kit (ESP32-S3 + SX1262), built for fast boot and responsive runtime.
-
-## What It Does
-
-- Receives LoRa APRS packets and prints decoded payloads to serial monitor.
-- Sends periodic APRS GPS beacons when a valid GPS fix exists.
-- Supports manual APRS packet TX from serial monitor.
-- Hosts a web config page for APRS + Wi-Fi settings.
-- Tries saved home Wi-Fi first, then falls back to device AP mode if unreachable.
-- Uses LoRa APRS wire compatibility prefix: `0x3C 0xFF 0x01` + APRS text payload.
-- Uses the expansion touchscreen in touch-only mode (no keyboard required).
-
-## Display + Touch
-
-- Expansion kit touchscreen resolution is `320x240` (landscape UI on a `240x320` ST7789 panel).
-- Touch controller is CHSC6x over I2C.
-
-## Configure
-
-- Runtime config is stored on-device (NVS) and edited via web UI.
-- `include/app_config.h` remains the default fallback values used before first save.
+A small APRS app for the expansion kit that will allow passive monitoring and some basic functionality: daily APRSPH check-in, #APRSThursday check-in and weather query.
 
 ## Web Config
 
@@ -44,42 +24,19 @@ Upload:
 
 Monitor:
 
-- `pio device monitor -b 115200`
+- `pio device monitor`
 
 Convenience script:
 
-- `./build-upload-monitor.sh build`
-- `./build-upload-monitor.sh upload`
-- `./build-upload-monitor.sh monitor`
-- `./build-upload-monitor.sh upload-monitor`
-- `./build-upload-monitor.sh clean-upload-monitor`
+- `./build-upload-monitor.sh`
+- `./build-upload-monitor.sh --erase`
 
-## Serial Commands
+## Use of AI
 
-- `help`
-- `status`
-- `web` (prints web config mode and URL)
-- `beacon`
-- `c` (toggles Main and LOG screens)
-- `screen next` / `screen prev`
-- `screen main` / `screen log`
-- `enter` (sends beacon when Main screen is active)
-- `tx <TNC2_PACKET>`
-- `scroll newer` / `scroll older`
-- `scroll pageup` / `scroll pagedown`
-- `scroll top`
+Hello!  I've been a developer professionally since about 2001 working on a large list of technologies.  I've created this project in my spare time so I could contribute to one of my favorite hobbies, radio and try out coding with an AI partner (Claude).  Lots of this code has been touched by AI but as I go through the process I'm reviewing the code.  AI is tool, and like any other tool can be used well or used poorly.
 
-## Hardware Navigation
+This project is a bit more than a proof of concept but not something that has any commercial value.  I'm doing this for fun and to learn.  Feel free to contribute, use or ignore.
 
-- Main screen touch zones:
-	- Top-right: open LOG screen.
-	- Bottom beacon button: send beacon now.
-- LOG screen touch zones:
-	- Top-left: return to Main screen.
-	- Lower-left / lower-right: page newer / older log entries.
-	- Middle-left / middle-right: scroll one entry newer / older.
-- Serial fallback remains: Enter on an empty serial command line while on Main sends a beacon.
+## License
 
-Example manual TX:
-
-- `tx N0CALL-7>APLRT1,WIDE1-1:>test from heltec-v4`
+GNU General Public License v3.0 (GPLv3)

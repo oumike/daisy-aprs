@@ -369,6 +369,7 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "label{display:block;margin:.45em 0 .15em;color:#dbe6fb;font-size:.92em}";
   html += "input,select{width:100%;padding:.5em;border:1px solid #3b4d71;border-radius:6px;background:#18233a;color:#eff5ff;box-sizing:border-box}";
   html += "button{margin-top:1.1em;padding:.6em 1.2em;background:#4f8cff;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer}";
+  html += "button.danger{background:#b53a3a}";
   html += ".row2{display:grid;grid-template-columns:1fr 1fr;gap:.6em}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.6em}";
   html += ".msg{margin:.45em 0;color:#9ef0ae}.small{font-size:.85em;color:#b7c8e8}";
   html += "@media (max-width:700px){.row2,.row3{grid-template-columns:1fr}}";
@@ -483,6 +484,12 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "<label>Import YAML file</label>";
   html += "<input type='file' name='config_file' accept='.yml,.yaml,text/yaml'>";
   html += "<button type='submit'>Import YAML</button>";
+  html += "</form>";
+
+  html += "<h3>Factory Reset</h3>";
+  html += "<p class='small'>Clears all saved settings and reboots to first-boot behavior (AP fallback until configured).</p>";
+  html += "<form method='POST' action='/reset' onsubmit='return confirm(\"Erase all saved settings and reboot?\")'>";
+  html += "<button class='danger' type='submit'>Factory Reset</button>";
   html += "</form></body></html>";
 
   server.send(200, "text/html", html);
@@ -543,6 +550,26 @@ void handleSave() {
   }
 
   sendConfigPage("Save failed.");
+}
+
+void handleFactoryReset() {
+  if (!gCfg) {
+    server.send(500, "text/plain", "No config");
+    return;
+  }
+
+  RuntimeConfig resetCfg;
+  if (!runtimeConfigFactoryReset(resetCfg)) {
+    sendConfigPage("Factory reset failed.");
+    return;
+  }
+
+  *gCfg = resetCfg;
+  if (gOnSave) {
+    gOnSave();
+  }
+
+  sendConfigPageAndReboot("Factory reset complete. Rebooting now...");
 }
 
 void updateIpBuffer() {
@@ -624,6 +651,7 @@ bool startAccessPoint() {
 void configureRoutes() {
   server.on("/", HTTP_GET, []() { sendConfigPage(); });
   server.on("/save", HTTP_POST, handleSave);
+  server.on("/reset", HTTP_POST, handleFactoryReset);
   server.on("/export", HTTP_GET, []() {
     if (!gCfg) {
       server.send(500, "text/plain", "No config");

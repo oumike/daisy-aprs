@@ -2,7 +2,12 @@
 
 #include <Arduino.h>
 
+#ifndef APP_VERSION
+#define APP_VERSION "dev"
+#endif
+
 namespace AppConfig {
+static constexpr const char* kVersion = APP_VERSION;
 // Replace these with your real station values.
 static constexpr const char* kCallsign = "N0CALL-7";
 static constexpr const char* kDestination = "APLRT1";
@@ -19,9 +24,9 @@ static constexpr uint32_t kNoFixLogIntervalMs = 30000;
 static constexpr uint32_t kSerialBaud = 115200;
 static constexpr uint32_t kGpsBaud = 9600;
 
-// Temporary bring-up defaults. Web config should override these.
-static constexpr const char* kDefaultWifiSsid = "rhinohome";
-static constexpr const char* kDefaultWifiPass = "fishfood is smelly";
+// Leave empty to start in AP fallback until configured via web UI.
+static constexpr const char* kDefaultWifiSsid = "";
+static constexpr const char* kDefaultWifiPass = "";
 
 static constexpr float kFrequencyMhz = 433.775f;
 static constexpr int kSpreadingFactor = 12;

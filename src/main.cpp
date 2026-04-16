@@ -70,6 +70,24 @@ RuntimeConfig gRuntimeCfg;
 
 String serialLine;
 
+struct BatteryReading {
+  float adcVoltage;
+  float voltageBeforeCalibration;
+  float voltage;
+  float avgMilliVolts;
+  float avgRawAdc;
+  int milliVoltSampleCount;
+  bool usedRawFallback;
+  int percent;
+  int linearPercent;
+  float curveLowVoltage;
+  float curveHighVoltage;
+  int curveLowPercent;
+  int curveHighPercent;
+  float curveInterpolation;
+  bool valid;
+};
+
 bool sendBeaconNow();
 bool sendBeaconWithPosition(double lat, double lon, double courseDeg, double speedKnots,
                             long altitudeFeet);
@@ -82,6 +100,8 @@ bool handleLogScreenTouch(int16_t x, int16_t y);
 void transmitAprs(const String& aprsText);
 void applyRuntimeRadioConfig();
 void onWebConfigSaved();
+BatteryReading readBattery();
+void printBatteryStatus(bool detailed = false);
 int readBatteryPercent();
 
 void restoreDisplaySpiAfterRadioFailure() {
@@ -115,7 +135,7 @@ void updateWifiUiStateFromSystem() {
   const bool hasRealStaIp = !ipIsZero(staIp) && !ipIsApDefault(staIp);
 
   const bool uiApMode = webRunning ? webApMode : apMode;
-  const bool uiConnected = webRunning ? true : (apMode || staConnected || hasRealStaIp);
+  const bool uiConnected = webRunning ? !webApMode : (apMode || staConnected || hasRealStaIp);
 
   UI::setWifiState(uiConnected, uiApMode);
 }
@@ -200,9 +220,25 @@ void prepareGpsPower() {
   delay(30);
 }
 
-int readBatteryPercent() {
+float readBatteryAdcVoltage(float* outAvgMilliVolts,
+                           int* outMilliVoltSampleCount,
+                           bool* outUsedRawFallback,
+                           float* outAvgRawAdc) {
+  if (outAvgMilliVolts) {
+    *outAvgMilliVolts = 0.0f;
+  }
+  if (outMilliVoltSampleCount) {
+    *outMilliVoltSampleCount = 0;
+  }
+  if (outUsedRawFallback) {
+    *outUsedRawFallback = false;
+  }
+  if (outAvgRawAdc) {
+    *outAvgRawAdc = 0.0f;
+  }
+
   if (BoardPins::BATTERY_ADC < 0) {
-    return -1;
+    return 0.0f;
   }
 
   constexpr int kSamples = 8;
@@ -217,23 +253,41 @@ int readBatteryPercent() {
     delayMicroseconds(200);
   }
 
-  float vadc = 0.0f;
   if (validMvSamples > 0) {
-    vadc = (static_cast<float>(sumMv) / static_cast<float>(validMvSamples)) / 1000.0f;
-  } else {
-    // Fallback for boards/cores where calibrated millivolt reads are unavailable.
-    uint32_t sumRaw = 0;
-    for (int i = 0; i < kSamples; ++i) {
-      sumRaw += static_cast<uint32_t>(analogRead(BoardPins::BATTERY_ADC));
-      delayMicroseconds(200);
+    const float avgMv = static_cast<float>(sumMv) / static_cast<float>(validMvSamples);
+    if (outAvgMilliVolts) {
+      *outAvgMilliVolts = avgMv;
     }
-    const float raw = static_cast<float>(sumRaw) / static_cast<float>(kSamples);
-    vadc = raw * (3.1f / 4095.0f);
+    if (outMilliVoltSampleCount) {
+      *outMilliVoltSampleCount = validMvSamples;
+    }
+    return avgMv / 1000.0f;
   }
 
-  const float vbat = vadc * BoardPins::BATTERY_DIVIDER;
-  const float ratio = (vbat - BoardPins::BATTERY_VMIN) /
-                      (BoardPins::BATTERY_VMAX - BoardPins::BATTERY_VMIN);
+  // Fallback for boards/cores where calibrated millivolt reads are unavailable.
+  if (outUsedRawFallback) {
+    *outUsedRawFallback = true;
+  }
+  uint32_t sumRaw = 0;
+  for (int i = 0; i < kSamples; ++i) {
+    sumRaw += static_cast<uint32_t>(analogRead(BoardPins::BATTERY_ADC));
+    delayMicroseconds(200);
+  }
+
+  const float raw = static_cast<float>(sumRaw) / static_cast<float>(kSamples);
+  if (outAvgRawAdc) {
+    *outAvgRawAdc = raw;
+  }
+  return raw * (3.1f / 4095.0f);
+}
+
+int linearPercentFromVoltage(float vbat) {
+  const float denom = BoardPins::BATTERY_VMAX - BoardPins::BATTERY_VMIN;
+  if (denom <= 0.001f) {
+    return 0;
+  }
+
+  const float ratio = (vbat - BoardPins::BATTERY_VMIN) / denom;
   int percent = static_cast<int>(roundf(ratio * 100.0f));
   if (percent < 0) {
     percent = 0;
@@ -242,6 +296,193 @@ int readBatteryPercent() {
     percent = 100;
   }
   return percent;
+}
+
+int batteryPercentFromVoltage(float vbat,
+                             float* outLowVoltage,
+                             float* outHighVoltage,
+                             int* outLowPercent,
+                             int* outHighPercent,
+                             float* outInterpolation) {
+  struct SocPoint {
+    float voltage;
+    int percent;
+  };
+
+  // Li-ion discharge curve approximation (single cell under light load).
+  static constexpr SocPoint kSocCurve[] = {
+      {4.20f, 100}, {4.15f, 95}, {4.11f, 90}, {4.08f, 85}, {4.02f, 80},
+      {3.98f, 75},  {3.95f, 70}, {3.92f, 65}, {3.89f, 60}, {3.87f, 55},
+      {3.85f, 50},  {3.84f, 45}, {3.82f, 40}, {3.80f, 35}, {3.79f, 30},
+      {3.77f, 25},  {3.75f, 20}, {3.73f, 15}, {3.71f, 10}, {3.69f, 5},
+      {3.27f, 0},
+  };
+
+  if (outLowVoltage) {
+    *outLowVoltage = kSocCurve[0].voltage;
+  }
+  if (outHighVoltage) {
+    *outHighVoltage = kSocCurve[0].voltage;
+  }
+  if (outLowPercent) {
+    *outLowPercent = kSocCurve[0].percent;
+  }
+  if (outHighPercent) {
+    *outHighPercent = kSocCurve[0].percent;
+  }
+  if (outInterpolation) {
+    *outInterpolation = 1.0f;
+  }
+
+  if (vbat >= kSocCurve[0].voltage) {
+    return 100;
+  }
+
+  constexpr size_t kCount = sizeof(kSocCurve) / sizeof(kSocCurve[0]);
+  for (size_t i = 1; i < kCount; ++i) {
+    if (vbat >= kSocCurve[i].voltage) {
+      const float vHigh = kSocCurve[i - 1].voltage;
+      const float vLow = kSocCurve[i].voltage;
+      const int pHigh = kSocCurve[i - 1].percent;
+      const int pLow = kSocCurve[i].percent;
+
+      if (outLowVoltage) {
+        *outLowVoltage = vLow;
+      }
+      if (outHighVoltage) {
+        *outHighVoltage = vHigh;
+      }
+      if (outLowPercent) {
+        *outLowPercent = pLow;
+      }
+      if (outHighPercent) {
+        *outHighPercent = pHigh;
+      }
+
+      const float span = vHigh - vLow;
+      if (span <= 0.0f) {
+        if (outInterpolation) {
+          *outInterpolation = 0.0f;
+        }
+        return pLow;
+      }
+
+      const float t = (vbat - vLow) / span;
+      if (outInterpolation) {
+        *outInterpolation = t;
+      }
+      int percent = static_cast<int>(roundf(static_cast<float>(pLow) +
+                                            t * static_cast<float>(pHigh - pLow)));
+      if (percent < 0) {
+        percent = 0;
+      }
+      if (percent > 100) {
+        percent = 100;
+      }
+      return percent;
+    }
+  }
+
+  if (outLowVoltage) {
+    *outLowVoltage = kSocCurve[kCount - 1].voltage;
+  }
+  if (outHighVoltage) {
+    *outHighVoltage = kSocCurve[kCount - 1].voltage;
+  }
+  if (outLowPercent) {
+    *outLowPercent = kSocCurve[kCount - 1].percent;
+  }
+  if (outHighPercent) {
+    *outHighPercent = kSocCurve[kCount - 1].percent;
+  }
+  if (outInterpolation) {
+    *outInterpolation = 0.0f;
+  }
+
+  return 0;
+}
+
+BatteryReading readBattery() {
+  if (BoardPins::BATTERY_ADC < 0) {
+    return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, false, -1, -1, 0.0f, 0.0f, 0, 0, 0.0f, false};
+  }
+
+  float avgMv = 0.0f;
+  float avgRawAdc = 0.0f;
+  int mvSampleCount = 0;
+  bool usedRawFallback = false;
+  const float vadc = readBatteryAdcVoltage(&avgMv, &mvSampleCount, &usedRawFallback, &avgRawAdc);
+  if (vadc <= 0.01f) {
+    return {vadc, 0.0f, 0.0f, avgMv, avgRawAdc, mvSampleCount, usedRawFallback,
+            -1,   -1,   0.0f, 0.0f, 0,   0,   0.0f, false};
+  }
+
+  const float vbatBeforeCalibration = vadc * BoardPins::BATTERY_DIVIDER;
+  const float vbat = (vbatBeforeCalibration * BoardPins::BATTERY_CALIBRATION_GAIN) +
+                     BoardPins::BATTERY_CALIBRATION_OFFSET;
+
+  float curveLowVoltage = 0.0f;
+  float curveHighVoltage = 0.0f;
+  int curveLowPercent = 0;
+  int curveHighPercent = 0;
+  float curveInterpolation = 0.0f;
+  const int percent = batteryPercentFromVoltage(vbat, &curveLowVoltage, &curveHighVoltage,
+                                                &curveLowPercent, &curveHighPercent,
+                                                &curveInterpolation);
+  const int linearPercent = linearPercentFromVoltage(vbat);
+
+  return {vadc,
+          vbatBeforeCalibration,
+          vbat,
+          avgMv,
+          avgRawAdc,
+          mvSampleCount,
+          usedRawFallback,
+          percent,
+          linearPercent,
+          curveLowVoltage,
+          curveHighVoltage,
+          curveLowPercent,
+          curveHighPercent,
+          curveInterpolation,
+          true};
+}
+
+int readBatteryPercent() {
+  const BatteryReading reading = readBattery();
+  return reading.valid ? reading.percent : -1;
+}
+
+void printBatteryStatus(bool detailed) {
+  const BatteryReading reading = readBattery();
+  if (!reading.valid) {
+    Serial.println("[BATTERY] unavailable");
+    return;
+  }
+
+  Serial.printf("[BATTERY] vbat=%.3fV percent=%d%% (gain=%.3f offset=%.3fV)\n", reading.voltage,
+                reading.percent, BoardPins::BATTERY_CALIBRATION_GAIN,
+                BoardPins::BATTERY_CALIBRATION_OFFSET);
+
+  if (!detailed) {
+    return;
+  }
+
+  if (reading.usedRawFallback) {
+    Serial.printf("[BATTERY] adc path=raw avg_count=%.1f vadc=%.3fV\n", reading.avgRawAdc,
+                  reading.adcVoltage);
+  } else {
+    Serial.printf("[BATTERY] adc path=millivolts samples=%d avg=%.1fmV vadc=%.3fV\n",
+                  reading.milliVoltSampleCount, reading.avgMilliVolts, reading.adcVoltage);
+  }
+
+  Serial.printf("[BATTERY] divider=%.3f pre_cal=%.3fV post_cal=%.3fV\n",
+                BoardPins::BATTERY_DIVIDER, reading.voltageBeforeCalibration, reading.voltage);
+  Serial.printf("[BATTERY] curve segment: %.2fV(%d%%) .. %.2fV(%d%%), t=%.3f\n",
+                reading.curveLowVoltage, reading.curveLowPercent, reading.curveHighVoltage,
+                reading.curveHighPercent, reading.curveInterpolation);
+  Serial.printf("[BATTERY] percent curve=%d%% linear=%d%%\n", reading.percent,
+                reading.linearPercent);
 }
 
 void initTouchInput() {
@@ -292,9 +533,23 @@ bool isWxButtonTouch(int16_t x, int16_t y) {
 }
 
 bool handleMainScreenTouch(int16_t x, int16_t y) {
+  if (UI::isMainDetailActive()) {
+    if (UI::handleMainDetailTouch(x, y)) {
+      Serial.println("[UI] touch: close main detail");
+      UI::render();
+    }
+    return false;
+  }
+
   if (isScreenToggleButtonTouch(x, y)) {
     UI::nextScreen();
     Serial.println("[UI] touch: toggle main/log");
+    UI::render();
+    return false;
+  }
+
+  if (UI::openMainDetailAt(x, y)) {
+    Serial.println("[UI] touch: open main detail");
     UI::render();
     return false;
   }
@@ -795,6 +1050,7 @@ void printStatus() {
                 gRuntimeCfg.frequencyMhz, gRuntimeCfg.spreadingFactor, gRuntimeCfg.bandwidthKhz,
                 gRuntimeCfg.codingRate, gRuntimeCfg.txPowerDbm,
                 static_cast<unsigned long>(gRuntimeCfg.beaconIntervalMs / 60000UL));
+  printBatteryStatus();
 
   if (webConfigRunning()) {
     Serial.printf("[STATUS] web mode=%s ip=%s ssid=%s\n",
@@ -821,6 +1077,8 @@ void handleSerialLine(const String& line) {
     Serial.println("Commands:");
     Serial.println("  help                 Show this help");
     Serial.println("  status               Show GPS and runtime status");
+    Serial.println("  battery              Show battery voltage and percentage");
+    Serial.println("  battery debug        Show detailed battery math and curve interpolation");
     Serial.println("  web                  Show web config URL and mode");
     Serial.println("  beacon               Send APRS beacon now (if GPS fix is valid)");
     Serial.println("  c                    Toggle Main and LOG screens");
@@ -836,6 +1094,16 @@ void handleSerialLine(const String& line) {
 
   if (line == "status") {
     printStatus();
+    return;
+  }
+
+  if (line == "battery") {
+    printBatteryStatus();
+    return;
+  }
+
+  if (line == "battery debug") {
+    printBatteryStatus(true);
     return;
   }
 

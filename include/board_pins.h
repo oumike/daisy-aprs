@@ -38,4 +38,7 @@ constexpr int BATTERY_ADC = 4;
 constexpr float BATTERY_DIVIDER = 2.0f;
 constexpr float BATTERY_VMIN = 3.20f;
 constexpr float BATTERY_VMAX = 4.20f;
+// Calibration to align reported VBAT with a multimeter reading.
+constexpr float BATTERY_CALIBRATION_GAIN = 1.00f;
+constexpr float BATTERY_CALIBRATION_OFFSET = 0.00f;
 }  // namespace BoardPins

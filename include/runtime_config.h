@@ -33,3 +33,4 @@ struct RuntimeConfig {
 void runtimeConfigSetDefaults(RuntimeConfig& cfg);
 void runtimeConfigLoad(RuntimeConfig& cfg);
 bool runtimeConfigSave(const RuntimeConfig& cfg);
+bool runtimeConfigFactoryReset(RuntimeConfig& cfg);
