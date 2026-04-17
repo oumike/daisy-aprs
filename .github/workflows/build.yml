@@ -47,4 +47,3 @@ jobs:
             dist/*.bin
             dist/*.elf
             dist/*.map
-            build-upload-monitor.sh
