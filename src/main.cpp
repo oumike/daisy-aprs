@@ -241,6 +241,12 @@ float readBatteryAdcVoltage(float* outAvgMilliVolts,
     return 0.0f;
   }
 
+  if (BoardPins::BATTERY_ADC_CTRL >= 0) {
+    pinMode(BoardPins::BATTERY_ADC_CTRL, OUTPUT);
+    digitalWrite(BoardPins::BATTERY_ADC_CTRL, BoardPins::BATTERY_ADC_CTRL_ACTIVE);
+    delayMicroseconds(200);
+  }
+
   constexpr int kSamples = 8;
   uint32_t sumMv = 0;
   int validMvSamples = 0;
@@ -478,6 +484,8 @@ void printBatteryStatus(bool detailed) {
 
   Serial.printf("[BATTERY] divider=%.3f pre_cal=%.3fV post_cal=%.3fV\n",
                 BoardPins::BATTERY_DIVIDER, reading.voltageBeforeCalibration, reading.voltage);
+  Serial.printf("[BATTERY] adc_pin=%d adc_ctrl=%d\n", BoardPins::BATTERY_ADC,
+                BoardPins::BATTERY_ADC_CTRL);
   Serial.printf("[BATTERY] curve segment: %.2fV(%d%%) .. %.2fV(%d%%), t=%.3f\n",
                 reading.curveLowVoltage, reading.curveLowPercent, reading.curveHighVoltage,
                 reading.curveHighPercent, reading.curveInterpolation);
@@ -1261,6 +1269,10 @@ void setup() {
   analogReadResolution(12);
   if (BoardPins::BATTERY_ADC >= 0) {
     analogSetPinAttenuation(BoardPins::BATTERY_ADC, ADC_11db);
+  }
+  if (BoardPins::BATTERY_ADC_CTRL >= 0) {
+    pinMode(BoardPins::BATTERY_ADC_CTRL, OUTPUT);
+    digitalWrite(BoardPins::BATTERY_ADC_CTRL, BoardPins::BATTERY_ADC_CTRL_ACTIVE);
   }
   initTouchInput();
   prepareGpsPower();

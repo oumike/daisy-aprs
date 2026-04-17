@@ -34,8 +34,11 @@ constexpr int TOUCH_INT = -1;
 constexpr int TOUCH_RST = 44;
 
 // Battery sense (voltage divider into ADC).
-constexpr int BATTERY_ADC = 4;
-constexpr float BATTERY_DIVIDER = 2.0f;
+// Heltec WiFi LoRa 32 V4 battery read path uses GPIO1 with an ADC gate on GPIO37.
+constexpr int BATTERY_ADC = 1;
+constexpr int BATTERY_ADC_CTRL = 37;
+constexpr int BATTERY_ADC_CTRL_ACTIVE = HIGH;
+constexpr float BATTERY_DIVIDER = 4.90f;
 constexpr float BATTERY_VMIN = 3.20f;
 constexpr float BATTERY_VMAX = 4.20f;
 // Calibration to align reported VBAT with a multimeter reading.
