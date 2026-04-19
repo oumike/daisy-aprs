@@ -19,6 +19,7 @@ A small APRS app for the expansion kit that will allow passive monitoring and so
 	- `BEACON`: send position beacon now.
 	- `TEST`: send APRSPH test message.
 	- `APRSPH`: send your APRSPH check-in message.
+	- `THURS`: send `CQ HOTG <message>` to `ANSRVR` (message configurable in Web Config).
 	- `WX`: request weather from WXBOT using GPS/manual position.
 - Status badges (bottom bar):
 	- `GPS`: `NO FIX` or satellite count.

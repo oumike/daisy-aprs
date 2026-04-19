@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "app_config.h"
 #include "runtime_config.h"
 
 namespace {
@@ -223,6 +224,9 @@ String buildConfigYaml(const RuntimeConfig& cfg) {
   y += "aprsph_message: ";
   y += yamlQuoted(String(cfg.aprsphMessage));
   y += "\n";
+  y += "hotg_message: ";
+  y += yamlQuoted(String(cfg.hotgMessage));
+  y += "\n";
   y += "symbol_table: ";
   y += yamlQuoted(String(cfg.symbolTable));
   y += "\n";
@@ -231,6 +235,9 @@ String buildConfigYaml(const RuntimeConfig& cfg) {
   y += "\n";
   y += "beacon_interval_ms: ";
   y += String(cfg.beaconIntervalMs);
+  y += "\n";
+  y += "screen_timeout_sec: ";
+  y += String(cfg.screenTimeoutSec);
   y += "\n";
   y += "frequency_mhz: ";
   y += String(cfg.frequencyMhz, 3);
@@ -305,6 +312,8 @@ bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut) 
       copyToArray(next.comment, sizeof(next.comment), val);
     } else if (key == "aprsph_message") {
       copyToArray(next.aprsphMessage, sizeof(next.aprsphMessage), val);
+    } else if (key == "hotg_message") {
+      copyToArray(next.hotgMessage, sizeof(next.hotgMessage), val);
     } else if (key == "symbol_table") {
       if (val.length() > 0) {
         next.symbolTable = val[0];
@@ -315,6 +324,8 @@ bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut) 
       }
     } else if (key == "beacon_interval_ms") {
       next.beaconIntervalMs = static_cast<uint32_t>(strtoul(val.c_str(), nullptr, 10));
+    } else if (key == "screen_timeout_sec") {
+      next.screenTimeoutSec = static_cast<uint16_t>(strtoul(val.c_str(), nullptr, 10));
     } else if (key == "frequency_mhz") {
       next.frequencyMhz = val.toFloat();
     } else if (key == "spreading_factor") {
@@ -425,6 +436,9 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "<label>APRSPH Message</label><input name='aprsph_message' maxlength='31' value='";
   html += escapeHtml(String(gCfg->aprsphMessage));
   html += "'>";
+  html += "<label>HOTG Message</label><input name='hotg_message' maxlength='31' value='";
+  html += escapeHtml(String(gCfg->hotgMessage));
+  html += "'>";
 
   html += "<div class='row2'>";
   html += "<div><label>Symbol Table</label><input name='symbol_table' maxlength='1' value='";
@@ -437,6 +451,10 @@ void sendConfigPage(const char* msg = nullptr) {
   html += "<h3>Beacon and GPS</h3>";
   html += "<label>Beacon Interval (minutes)</label><input type='number' min='5' name='beacon_min' value='";
   html += String(gCfg->beaconIntervalMs / 60000UL);
+  html += "'>";
+
+  html += "<label>Screen Timeout (seconds)</label><input type='number' min='1' max='300' name='screen_timeout_sec' value='";
+  html += String(gCfg->screenTimeoutSec);
   html += "'>";
 
   html += "<label><input type='checkbox' name='manual_pos' value='1'";
@@ -521,6 +539,8 @@ void handleSave() {
   copyToArray(next.comment, sizeof(next.comment), argOr("comment", String(next.comment)));
   copyToArray(next.aprsphMessage, sizeof(next.aprsphMessage),
               argOr("aprsph_message", String(next.aprsphMessage)));
+  copyToArray(next.hotgMessage, sizeof(next.hotgMessage),
+              argOr("hotg_message", String(next.hotgMessage)));
 
   const String symbolTable = argOr("symbol_table", String(next.symbolTable));
   if (symbolTable.length() > 0) {
@@ -533,6 +553,15 @@ void handleSave() {
   }
 
   next.beaconIntervalMs = argToULong("beacon_min", next.beaconIntervalMs / 60000UL) * 60000UL;
+
+  int screenTimeoutSec = argToInt("screen_timeout_sec", next.screenTimeoutSec);
+  if (screenTimeoutSec < 1) {
+    screenTimeoutSec = AppConfig::kScreenTimeoutSec;
+  }
+  if (screenTimeoutSec > AppConfig::kScreenTimeoutMaxSec) {
+    screenTimeoutSec = AppConfig::kScreenTimeoutMaxSec;
+  }
+  next.screenTimeoutSec = static_cast<uint16_t>(screenTimeoutSec);
 
   next.allowManualPosition = server.hasArg("manual_pos");
   next.manualLatE7 = static_cast<int32_t>(roundf(argToFloat("lat", next.manualLatE7 / 1e7f) * 1e7f));

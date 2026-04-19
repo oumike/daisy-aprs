@@ -8,12 +8,14 @@ struct RuntimeConfig {
   char path[32];
   char comment[80];
   char aprsphMessage[32];
+  char hotgMessage[32];
 
   char symbolTable;
   char symbol;
 
   uint32_t beaconIntervalMs;
   uint32_t noFixLogIntervalMs;
+  uint16_t screenTimeoutSec;
 
   float frequencyMhz;
   int spreadingFactor;

@@ -39,7 +39,7 @@ constexpr int16_t kScreenToggleButtonH = 16;
 constexpr int16_t kScreenToggleButtonX = kUiScreenWidth - kScreenToggleButtonW - 14;
 constexpr int16_t kScreenToggleButtonY = 34;
 constexpr int16_t kActionButtonGap = 4;
-constexpr int16_t kActionButtonW = ((kMainPanelW - 16) - (3 * kActionButtonGap)) / 4;
+constexpr int16_t kActionButtonW = ((kMainPanelW - 16) - (4 * kActionButtonGap)) / 5;
 constexpr int16_t kBeaconButtonX = 16;
 constexpr int16_t kBeaconButtonY = 173;
 constexpr int16_t kBeaconButtonW = kActionButtonW;
@@ -52,7 +52,11 @@ constexpr int16_t kAprsphButtonX = kTestButtonX + kTestButtonW + kActionButtonGa
 constexpr int16_t kAprsphButtonY = kBeaconButtonY;
 constexpr int16_t kAprsphButtonW = kActionButtonW;
 constexpr int16_t kAprsphButtonH = kBeaconButtonH;
-constexpr int16_t kWxButtonX = kAprsphButtonX + kAprsphButtonW + kActionButtonGap;
+constexpr int16_t kThursButtonX = kAprsphButtonX + kAprsphButtonW + kActionButtonGap;
+constexpr int16_t kThursButtonY = kBeaconButtonY;
+constexpr int16_t kThursButtonW = kActionButtonW;
+constexpr int16_t kThursButtonH = kBeaconButtonH;
+constexpr int16_t kWxButtonX = kThursButtonX + kThursButtonW + kActionButtonGap;
 constexpr int16_t kWxButtonY = kBeaconButtonY;
 constexpr int16_t kWxButtonW = kActionButtonW;
 constexpr int16_t kWxButtonH = kBeaconButtonH;
@@ -65,6 +69,34 @@ uint32_t touchButtonLockoutUntilMs = 0;
 bool touchOnline = false;
 bool touchWasDown = false;
 bool radioReady = false;
+uint32_t lastUserActivityMs = 0;
+bool displaySleeping = false;
+bool wakeButtonLastRawLevel = false;
+bool wakeButtonStableLevel = false;
+bool wakeButtonIdleLevel = false;
+uint32_t wakeButtonLastRawChangeMs = 0;
+uint32_t lastWakeButtonActionMs = 0;
+
+constexpr uint32_t kWakeButtonDebounceMs = 180;
+
+bool readWakeButtonLevel() {
+  return digitalRead(BoardPins::WAKE_BUTTON) == HIGH;
+}
+
+bool detectWakeButtonIdleLevel() {
+  int highCount = 0;
+  int lowCount = 0;
+  constexpr int kSamples = 16;
+  for (int i = 0; i < kSamples; ++i) {
+    if (readWakeButtonLevel()) {
+      ++highCount;
+    } else {
+      ++lowCount;
+    }
+    delay(2);
+  }
+  return highCount >= lowCount;
+}
 
 RuntimeConfig gRuntimeCfg;
 
@@ -93,6 +125,7 @@ bool sendBeaconWithPosition(double lat, double lon, double courseDeg, double spe
                             long altitudeFeet);
 void sendTestPacket();
 void sendAprsphPacket();
+void sendThursPacket();
 void sendWxBotPacket();
 void openConversationsFromMain();
 void openMainFromConversations();
@@ -103,6 +136,104 @@ void onWebConfigSaved();
 BatteryReading readBattery();
 void printBatteryStatus(bool detailed = false);
 int readBatteryPercent();
+void noteUserActivity();
+void maybeHandleScreenTimeout();
+void initWakeButton();
+void pollWakeButton();
+
+void setDisplayBacklight(bool on) {
+  if (BoardPins::TFT_BACKLIGHT_PIN >= 0) {
+    digitalWrite(BoardPins::TFT_BACKLIGHT_PIN, on ? HIGH : LOW);
+  }
+}
+
+void noteUserActivity() {
+  lastUserActivityMs = millis();
+
+  if (!displaySleeping) {
+    return;
+  }
+
+  setDisplayBacklight(true);
+  displaySleeping = false;
+  UI::render(true);
+  Serial.println("[UI] display wake");
+}
+
+void maybeHandleScreenTimeout() {
+  if (displaySleeping || gRuntimeCfg.screenTimeoutSec == 0) {
+    return;
+  }
+
+  const uint32_t timeoutMs = static_cast<uint32_t>(gRuntimeCfg.screenTimeoutSec) * 1000UL;
+  const uint32_t now = millis();
+  if ((now - lastUserActivityMs) < timeoutMs) {
+    return;
+  }
+
+  setDisplayBacklight(false);
+  displaySleeping = true;
+  Serial.printf("[UI] display sleep after %us inactivity\n",
+                static_cast<unsigned int>(gRuntimeCfg.screenTimeoutSec));
+}
+
+void initWakeButton() {
+  if (BoardPins::WAKE_BUTTON < 0) {
+    return;
+  }
+
+  pinMode(BoardPins::WAKE_BUTTON, INPUT_PULLUP);
+
+  wakeButtonIdleLevel = detectWakeButtonIdleLevel();
+  wakeButtonStableLevel = wakeButtonIdleLevel;
+  wakeButtonLastRawLevel = wakeButtonIdleLevel;
+  wakeButtonLastRawChangeMs = millis();
+
+  Serial.printf("[UI] wake button pin=%d idle=%s\n", BoardPins::WAKE_BUTTON,
+                wakeButtonIdleLevel ? "HIGH" : "LOW");
+}
+
+void pollWakeButton() {
+  if (BoardPins::WAKE_BUTTON < 0) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  const bool rawLevel = readWakeButtonLevel();
+
+  if (rawLevel != wakeButtonLastRawLevel) {
+    wakeButtonLastRawLevel = rawLevel;
+    wakeButtonLastRawChangeMs = now;
+    return;
+  }
+
+  if ((now - wakeButtonLastRawChangeMs) < kWakeButtonDebounceMs) {
+    return;
+  }
+
+  if (wakeButtonStableLevel == rawLevel) {
+    return;
+  }
+
+  wakeButtonStableLevel = rawLevel;
+  const bool pressed = (wakeButtonStableLevel != wakeButtonIdleLevel);
+  if (!pressed) {
+    return;
+  }
+
+  if ((now - lastWakeButtonActionMs) < kWakeButtonDebounceMs) {
+    return;
+  }
+
+  lastWakeButtonActionMs = now;
+  if (displaySleeping) {
+    noteUserActivity();
+  } else {
+    setDisplayBacklight(false);
+    displaySleeping = true;
+    Serial.println("[UI] display sleep (button)");
+  }
+}
 
 void restoreDisplaySpiAfterRadioFailure() {
 #if defined(TFT_SCLK) && defined(TFT_MISO) && defined(TFT_MOSI) && defined(TFT_CS)
@@ -535,6 +666,11 @@ bool isAprsphButtonTouch(int16_t x, int16_t y) {
          y >= kAprsphButtonY && y < (kAprsphButtonY + kAprsphButtonH);
 }
 
+bool isThursButtonTouch(int16_t x, int16_t y) {
+  return x >= kThursButtonX && x < (kThursButtonX + kThursButtonW) &&
+         y >= kThursButtonY && y < (kThursButtonY + kThursButtonH);
+}
+
 bool isWxButtonTouch(int16_t x, int16_t y) {
   return x >= kWxButtonX && x < (kWxButtonX + kWxButtonW) && y >= kWxButtonY &&
          y < (kWxButtonY + kWxButtonH);
@@ -585,6 +721,15 @@ bool handleMainScreenTouch(int16_t x, int16_t y) {
     UI::render(true);
     sendAprsphPacket();
     Serial.println("[UI] touch: APRSPH send");
+    UI::render();
+    return true;
+  }
+
+  if (isThursButtonTouch(x, y)) {
+    UI::flashButton(UI::TouchButton::Thurs);
+    UI::render(true);
+    sendThursPacket();
+    Serial.println("[UI] touch: THURS send");
     UI::render();
     return true;
   }
@@ -678,6 +823,11 @@ void pollTouchInput() {
   }
   touchWasDown = true;
 
+  if (displaySleeping) {
+    noteUserActivity();
+    return;
+  }
+
   if ((now - lastTouchActionMs) < kTouchDebounceMs) {
     return;
   }
@@ -692,6 +842,7 @@ void pollTouchInput() {
     return;
   }
 
+  noteUserActivity();
   lastTouchActionMs = now;
   if (UI::currentScreen() == UI::Screen::Conversations) {
     handleLogScreenTouch(x, y);
@@ -960,8 +1111,30 @@ void sendAprsphPacket() {
     message = String(AppConfig::kAprsphMessage);
   }
 
-  transmitAprs(buildAprsMessagePacket("APRSPH", message));
+  String upper = message;
+  upper.toUpperCase();
+  if (upper == "CQ") {
+    message = "";
+  } else if (upper.startsWith("CQ ")) {
+    message = message.substring(3);
+    message.trim();
+  }
+
+  const String outbound = message.length() > 0 ? String("CQ ") + message : String("CQ");
+
+  transmitAprs(buildAprsMessagePacket("APRSPH", outbound));
   UI::noteStatus("APRSPH message sent");
+}
+
+void sendThursPacket() {
+  String message = String(gRuntimeCfg.hotgMessage);
+  message.trim();
+  if (message.length() == 0) {
+    message = String(AppConfig::kHotgMessage);
+  }
+
+  transmitAprs(buildAprsMessagePacket("ANSRVR", String("CQ HOTG ") + message));
+  UI::noteStatus("THURS message sent");
 }
 
 void sendWxBotPacket() {
@@ -1235,6 +1408,7 @@ void handleSerialLine(const String& line) {
 void pollSerialCommands() {
   while (Serial.available() > 0) {
     const char ch = static_cast<char>(Serial.read());
+    noteUserActivity();
     if (ch == '\r') {
       continue;
     }
@@ -1266,6 +1440,7 @@ void setup() {
   runtimeConfigLoad(gRuntimeCfg);
 
   prepareBoardPower();
+  initWakeButton();
   analogReadResolution(12);
   if (BoardPins::BATTERY_ADC >= 0) {
     analogSetPinAttenuation(BoardPins::BATTERY_ADC, ADC_11db);
@@ -1316,6 +1491,9 @@ void setup() {
   updateWifiUiStateFromSystem();
 
   UI::render(true);
+  setDisplayBacklight(true);
+  displaySleeping = false;
+  lastUserActivityMs = millis();
 }
 
 void loop() {
@@ -1324,6 +1502,7 @@ void loop() {
   maybeSendBeacon();
   webConfigLoop();
   pollTouchInput();
+  pollWakeButton();
   pollSerialCommands();
 
   const uint32_t now = millis();
@@ -1341,5 +1520,8 @@ void loop() {
     lastBatterySampleMs = now;
   }
 
-  UI::render();
+  maybeHandleScreenTimeout();
+  if (!displaySleeping) {
+    UI::render();
+  }
 }

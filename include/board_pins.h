@@ -33,6 +33,10 @@ constexpr int TOUCH_SCL = 48;
 constexpr int TOUCH_INT = -1;
 constexpr int TOUCH_RST = 44;
 
+// Physical wake button labeled 35 on expansion wiring (active LOW).
+constexpr int WAKE_BUTTON = 35;
+constexpr int WAKE_BUTTON_ACTIVE = LOW;
+
 // Battery sense (voltage divider into ADC).
 // Heltec WiFi LoRa 32 V4 battery read path uses GPIO1 with an ADC gate on GPIO37.
 constexpr int BATTERY_ADC = 1;

@@ -14,6 +14,7 @@ enum class TouchButton : uint8_t {
 	Beacon,
 	Test,
 	Aprsph,
+	Thurs,
 	Wx,
 	LogScrollUp,
 	LogScrollDown,

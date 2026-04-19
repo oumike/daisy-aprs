@@ -593,14 +593,16 @@ void drawMainScreen() {
   const int buttonY = 173;
   const int buttonH = 22;
   const int buttonGap = 4;
-  const int buttonW = ((panelW - 16) - (3 * buttonGap)) / 4;
+  const int buttonW = ((panelW - 16) - (4 * buttonGap)) / 5;
   const int testButtonX = buttonX + buttonW + buttonGap;
   const int aprsphButtonX = testButtonX + buttonW + buttonGap;
-  const int wxButtonX = aprsphButtonX + buttonW + buttonGap;
+  const int thursButtonX = aprsphButtonX + buttonW + buttonGap;
+  const int wxButtonX = thursButtonX + buttonW + buttonGap;
 
     const bool beaconPressed = isButtonFlashing(UI::TouchButton::Beacon, now);
     const bool testPressed = isButtonFlashing(UI::TouchButton::Test, now);
     const bool aprsphPressed = isButtonFlashing(UI::TouchButton::Aprsph, now);
+    const bool thursPressed = isButtonFlashing(UI::TouchButton::Thurs, now);
     const bool wxPressed = isButtonFlashing(UI::TouchButton::Wx, now);
 
     const uint16_t beaconBg = beaconPressed ? tft.color565(170, 30, 30) : tft.color565(30, 92, 145);
@@ -612,6 +614,9 @@ void drawMainScreen() {
     const uint16_t aprsphBg = aprsphPressed ? tft.color565(170, 30, 30) : tft.color565(34, 88, 56);
     const uint16_t aprsphBorder =
       aprsphPressed ? tft.color565(255, 138, 138) : tft.color565(118, 214, 162);
+    const uint16_t thursBg = thursPressed ? tft.color565(170, 30, 30) : tft.color565(66, 64, 20);
+    const uint16_t thursBorder =
+      thursPressed ? tft.color565(255, 138, 138) : tft.color565(244, 215, 106);
     const uint16_t wxBg = wxPressed ? tft.color565(170, 30, 30) : tft.color565(78, 52, 24);
     const uint16_t wxBorder = wxPressed ? tft.color565(255, 138, 138) : tft.color565(226, 178, 112);
 
@@ -624,6 +629,9 @@ void drawMainScreen() {
     tft.fillRoundRect(aprsphButtonX, buttonY, buttonW, buttonH, 7, aprsphBg);
     tft.drawRoundRect(aprsphButtonX, buttonY, buttonW, buttonH, 7, aprsphBorder);
 
+    tft.fillRoundRect(thursButtonX, buttonY, buttonW, buttonH, 7, thursBg);
+    tft.drawRoundRect(thursButtonX, buttonY, buttonW, buttonH, 7, thursBorder);
+
     tft.fillRoundRect(wxButtonX, buttonY, buttonW, buttonH, 7, wxBg);
     tft.drawRoundRect(wxButtonX, buttonY, buttonW, buttonH, 7, wxBorder);
 
@@ -635,6 +643,8 @@ void drawMainScreen() {
   tft.drawString("TEST", testButtonX + (buttonW / 2), buttonY + (buttonH / 2));
   tft.setTextColor(TFT_WHITE, aprsphBg);
   tft.drawString("APRSPH", aprsphButtonX + (buttonW / 2), buttonY + (buttonH / 2));
+  tft.setTextColor(TFT_WHITE, thursBg);
+  tft.drawString("THURS", thursButtonX + (buttonW / 2), buttonY + (buttonH / 2));
   tft.setTextColor(TFT_WHITE, wxBg);
   tft.drawString("WX", wxButtonX + (buttonW / 2), buttonY + (buttonH / 2));
   tft.setTextDatum(TL_DATUM);

@@ -14,12 +14,15 @@ static constexpr const char* kDestination = "APLRT1";
 static constexpr const char* kPath = "WIDE1-1";
 static constexpr const char* kComment = "Heltec V4 APRS";
 static constexpr const char* kAprsphMessage = "Net";
+static constexpr const char* kHotgMessage = "Hello Thursday";
 
 static constexpr char kSymbolTable = '/';
 static constexpr char kSymbol = '>';
 
 static constexpr uint32_t kBeaconIntervalMs = 3600000;
 static constexpr uint32_t kNoFixLogIntervalMs = 30000;
+static constexpr uint16_t kScreenTimeoutSec = 30;
+static constexpr uint16_t kScreenTimeoutMaxSec = 300;
 
 static constexpr uint32_t kSerialBaud = 115200;
 static constexpr uint32_t kGpsBaud = 9600;

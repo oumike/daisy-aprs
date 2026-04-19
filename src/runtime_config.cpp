@@ -52,6 +52,13 @@ void sanitize(RuntimeConfig& cfg) {
   }
   cfg.noFixLogIntervalMs = AppConfig::kNoFixLogIntervalMs;
 
+  if (cfg.screenTimeoutSec == 0) {
+    cfg.screenTimeoutSec = AppConfig::kScreenTimeoutSec;
+  }
+  if (cfg.screenTimeoutSec > AppConfig::kScreenTimeoutMaxSec) {
+    cfg.screenTimeoutSec = AppConfig::kScreenTimeoutMaxSec;
+  }
+
   if (cfg.symbolTable == '\0') {
     cfg.symbolTable = AppConfig::kSymbolTable;
   }
@@ -61,6 +68,9 @@ void sanitize(RuntimeConfig& cfg) {
 
   if (cfg.aprsphMessage[0] == '\0') {
     copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), String(AppConfig::kAprsphMessage));
+  }
+  if (cfg.hotgMessage[0] == '\0') {
+    copyString(cfg.hotgMessage, sizeof(cfg.hotgMessage), String(AppConfig::kHotgMessage));
   }
 }
 }  // namespace
@@ -73,12 +83,14 @@ void runtimeConfigSetDefaults(RuntimeConfig& cfg) {
   copyString(cfg.path, sizeof(cfg.path), String(AppConfig::kPath));
   copyString(cfg.comment, sizeof(cfg.comment), String(AppConfig::kComment));
   copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), String(AppConfig::kAprsphMessage));
+  copyString(cfg.hotgMessage, sizeof(cfg.hotgMessage), String(AppConfig::kHotgMessage));
 
   cfg.symbolTable = AppConfig::kSymbolTable;
   cfg.symbol = AppConfig::kSymbol;
 
   cfg.beaconIntervalMs = AppConfig::kBeaconIntervalMs;
   cfg.noFixLogIntervalMs = AppConfig::kNoFixLogIntervalMs;
+  cfg.screenTimeoutSec = AppConfig::kScreenTimeoutSec;
 
   cfg.frequencyMhz = AppConfig::kFrequencyMhz;
   cfg.spreadingFactor = AppConfig::kSpreadingFactor;
@@ -120,6 +132,9 @@ void runtimeConfigLoad(RuntimeConfig& cfg) {
   if (prefs.isKey("aprsph_msg")) {
     copyString(cfg.aprsphMessage, sizeof(cfg.aprsphMessage), prefs.getString("aprsph_msg", ""));
   }
+  if (prefs.isKey("hotg_msg")) {
+    copyString(cfg.hotgMessage, sizeof(cfg.hotgMessage), prefs.getString("hotg_msg", ""));
+  }
 
   if (prefs.isKey("symtbl")) {
     const String symTab = prefs.getString("symtbl", "");
@@ -137,6 +152,9 @@ void runtimeConfigLoad(RuntimeConfig& cfg) {
 
   if (prefs.isKey("bcn_ms")) {
     cfg.beaconIntervalMs = prefs.getULong("bcn_ms", cfg.beaconIntervalMs);
+  }
+  if (prefs.isKey("scr_to_s")) {
+    cfg.screenTimeoutSec = static_cast<uint16_t>(prefs.getUShort("scr_to_s", cfg.screenTimeoutSec));
   }
 
   if (prefs.isKey("freq")) {
@@ -201,6 +219,7 @@ bool runtimeConfigSave(const RuntimeConfig& inCfg) {
   prefs.putString("path", cfg.path);
   prefs.putString("comment", cfg.comment);
   prefs.putString("aprsph_msg", cfg.aprsphMessage);
+  prefs.putString("hotg_msg", cfg.hotgMessage);
 
   char symTab[2] = {cfg.symbolTable, '\0'};
   char sym[2] = {cfg.symbol, '\0'};
@@ -209,6 +228,7 @@ bool runtimeConfigSave(const RuntimeConfig& inCfg) {
 
   prefs.putULong("bcn_ms", cfg.beaconIntervalMs);
   prefs.remove("nofix_ms");
+  prefs.putUShort("scr_to_s", cfg.screenTimeoutSec);
 
   prefs.putFloat("freq", cfg.frequencyMhz);
   prefs.putInt("sf", cfg.spreadingFactor);
