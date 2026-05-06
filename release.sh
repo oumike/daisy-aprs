@@ -48,12 +48,13 @@ git push origin "$TAG"
 if command -v gh >/dev/null 2>&1; then
     if gh release view "$TAG" >/dev/null 2>&1; then
         echo "GitHub release $TAG already exists."
+        echo "If it is still a draft, publish it to trigger the GitHub Actions build."
     else
-        gh release create "$TAG" --draft --generate-notes --title "$TAG"
-        echo "Draft GitHub release created for $TAG."
+        gh release create "$TAG" --generate-notes --title "$TAG"
+        echo "GitHub release published for $TAG."
     fi
 
-    echo "Publish the draft release to trigger the GitHub Actions build."
+    echo "Release workflow should start from the published release."
 else
     echo "Tag $TAG pushed."
     echo "Create and publish a GitHub release for $TAG to trigger the GitHub Actions build."
