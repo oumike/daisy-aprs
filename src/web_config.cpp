@@ -1,5 +1,6 @@
 #include "web_config.h"
 
+#include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
 
@@ -12,6 +13,7 @@
 
 namespace {
 constexpr uint32_t kConnectTimeoutMs = 10000;
+constexpr uint16_t kCaptiveDnsPort = 53;
 constexpr char kApSsid[] = "DAISY-APRS-AP";
 constexpr char kApPassword[] = "daisyaprs";
 static_assert((sizeof(kApPassword) - 1) >= 8,
@@ -21,15 +23,18 @@ static_assert((sizeof(kApPassword) - 1) <= 63,
 constexpr uint32_t kStaDropToApMs = 5000;
 
 WebServer server(80);
+DNSServer dnsServer;
 RuntimeConfig* gCfg = nullptr;
 WebConfigSaveCb gOnSave = nullptr;
 bool gRunning = false;
 bool gApMode = false;
+bool gDnsRunning = false;
 uint32_t gStaLostSinceMs = 0;
 char gIpBuf[24] = "";
 char gApSsid[32] = "";
 String gImportYaml;
 bool gImportTooLarge = false;
+bool gImportUploadSeen = false;
 
 constexpr size_t kMaxImportYamlBytes = 16384;
 
@@ -120,6 +125,58 @@ String escapeJson(const String& in) {
     }
   }
   return out;
+}
+
+bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut);
+
+void clearImportState() {
+  gImportYaml = "";
+  gImportTooLarge = false;
+  gImportUploadSeen = false;
+}
+
+String normalizeImportedYaml(String yaml) {
+  yaml.replace("\r\n", "\n");
+  yaml.replace('\r', '\n');
+  yaml.trim();
+  return yaml;
+}
+
+bool applyImportedYaml(const String& rawYaml, String& errorOut) {
+  if (!gCfg) {
+    errorOut = "No config";
+    return false;
+  }
+
+  String yaml = normalizeImportedYaml(rawYaml);
+  if (yaml.length() == 0) {
+    errorOut = "Import failed: empty YAML input.";
+    return false;
+  }
+
+  if (yaml.length() > kMaxImportYamlBytes) {
+    errorOut = "Import failed: YAML too large.";
+    return false;
+  }
+
+  RuntimeConfig next = *gCfg;
+  String parseErr;
+  if (!parseYamlConfig(yaml, next, parseErr)) {
+    errorOut = "Import failed: ";
+    errorOut += parseErr;
+    return false;
+  }
+
+  if (!runtimeConfigSave(next)) {
+    errorOut = "Import failed: could not save config.";
+    return false;
+  }
+
+  *gCfg = next;
+  if (gOnSave) {
+    gOnSave();
+  }
+  return true;
 }
 
 String summarizePacketForFeed(const String& packet) {
@@ -773,9 +830,23 @@ bool parseYamlConfig(const String& yaml, RuntimeConfig& next, String& errorOut) 
 void sendConfigPage(const char* msg);
 
 void sendConfigPageAndReboot(const char* msg) {
-  sendConfigPage(msg);
-  // Give the browser a brief moment to receive the response before restarting.
-  delay(250);
+  String html;
+  html.reserve(1024);
+  html += "<!doctype html><html><head><meta charset='utf-8'>";
+  html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<title>Daisy APRS Rebooting</title>";
+  html += "<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:34rem;margin:2.5rem auto;padding:0 1rem;background:#0f1522;color:#ecf2ff}h2{color:#9bc7ff}p{line-height:1.45}.small{font-size:.92em;color:#b7c8e8}</style>";
+  html += "</head><body><h2>Daisy APRS</h2><p>";
+  html += escapeHtml(msg ? String(msg) : String("Rebooting now..."));
+  html += "</p><p class='small'>This page will retry the web config in a few seconds. If the device joins a different Wi-Fi network or AP, reconnect there and open the config page again.</p>";
+  html += "<script>window.setTimeout(function(){ window.location.href = '/'; }, 4000);</script>";
+  html += "</body></html>";
+
+  server.sendHeader("Connection", "close");
+  server.send(200, "text/html", html);
+  // Import uploads are multipart POSTs; give the client longer to finish receiving
+  // the response before restarting the device.
+  delay(1200);
   ESP.restart();
 }
 
@@ -788,9 +859,10 @@ void appendPageShellStart(String& html) {
   html += "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:740px;margin:1.2em auto;padding:0 .9em;background:#0f1522;color:#ecf2ff}";
   html += "h2{margin:.2em 0 .6em;color:#9bc7ff}h3{margin:1em 0 .35em;color:#d9e6ff}";
   html += "label{display:block;margin:.45em 0 .15em;color:#dbe6fb;font-size:.92em}";
-  html += "input,select{width:100%;padding:.5em;border:1px solid #3b4d71;border-radius:6px;background:#18233a;color:#eff5ff;box-sizing:border-box}";
+  html += "input,select,textarea{width:100%;padding:.5em;border:1px solid #3b4d71;border-radius:6px;background:#18233a;color:#eff5ff;box-sizing:border-box}";
   html += "button{margin-top:1.1em;padding:.6em 1.2em;background:#4f8cff;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer}";
   html += "button.danger{background:#b53a3a}";
+  html += "a.button-link{display:inline-block;margin-top:.7em;padding:.55em .95em;background:#203252;border:1px solid #4a72af;border-radius:6px;color:#eef5ff;text-decoration:none;font-weight:600}";
   html += "button.tab-btn{margin-top:0;padding:.5em .9em;background:#1b2943;border:1px solid #3f5f92;color:#d9e8ff;font-weight:700}";
   html += "button.tab-btn.active{background:#4f8cff;border-color:#6ea2ff;color:#fff}";
   html += ".row2{display:grid;grid-template-columns:1fr 1fr;gap:.6em}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.6em}";
@@ -934,15 +1006,27 @@ void appendConfigForm(String& html) {
 
 void appendUtilityForms(String& html) {
   html += "<h3>Import / Export</h3>";
-  html += "<p class='small'>Export downloads YAML. Import uploads a YAML config file and applies it immediately.</p>";
+  html += "<p class='small'>Export downloads YAML. Import accepts pasted YAML in the captive portal, or an uploaded YAML file in a full browser, and applies it immediately.</p>";
+  if (gApMode) {
+    html += "<p class='small'>Captive-portal browsers often block file pickers. Use the paste form below inside the portal, or open this page in your full browser if you want file upload.</p>";
+    html += "<a class='button-link' href='http://";
+    html += webConfigIP();
+    html += "/' target='_blank' rel='noopener noreferrer'>Open Full Browser</a>";
+  }
   html += "<form method='GET' action='/export'>";
   html += "<button type='submit'>Export YAML</button>";
+  html += "</form>";
+
+  html += "<form method='POST' action='/import'>";
+  html += "<label>Paste YAML</label>";
+  html += "<textarea name='config_yaml' rows='10' spellcheck='false' autocapitalize='off' autocorrect='off' placeholder='callsign: N0CALL&#10;destination: APRS'></textarea>";
+  html += "<button type='submit'>Import Pasted YAML</button>";
   html += "</form>";
 
   html += "<form method='POST' action='/import' enctype='multipart/form-data'>";
   html += "<label>Import YAML file</label>";
   html += "<input type='file' name='config_file' accept='.yml,.yaml,text/yaml'>";
-  html += "<button type='submit'>Import YAML</button>";
+  html += "<button type='submit'>Import YAML File</button>";
   html += "</form>";
 
   html += "<h3>Factory Reset</h3>";
@@ -1328,6 +1412,16 @@ void sendConfigPage(const char* msg = nullptr) {
   server.send(200, "text/html", html);
 }
 
+void handleCaptivePortalProbe() {
+  if (gApMode) {
+    server.sendHeader("Location", String("http://") + gIpBuf, true);
+    server.send(302, "text/plain", "");
+    return;
+  }
+
+  server.send(204, "text/plain", "");
+}
+
 void handleSave() {
   if (!gCfg) {
     server.send(500, "text/plain", "No config");
@@ -1421,6 +1515,26 @@ void updateIpBuffer() {
   snprintf(gIpBuf, sizeof(gIpBuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
 }
 
+void stopCaptivePortalDns() {
+  if (!gDnsRunning) {
+    return;
+  }
+
+  dnsServer.stop();
+  gDnsRunning = false;
+}
+
+void startCaptivePortalDns() {
+  if (!gApMode) {
+    stopCaptivePortalDns();
+    return;
+  }
+
+  stopCaptivePortalDns();
+  dnsServer.start(kCaptiveDnsPort, "*", WiFi.softAPIP());
+  gDnsRunning = true;
+}
+
 bool connectStation() {
   if (!gCfg || gCfg->wifiSsid[0] == '\0') {
     return false;
@@ -1482,6 +1596,15 @@ bool startAccessPoint() {
 
 void configureRoutes() {
   server.on("/", HTTP_GET, []() { sendConfigPage(); });
+  server.on("/generate_204", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/hotspot-detect.html", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/gen_204", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/fwlink", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/connecttest.txt", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/ncsi.txt", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/redirect", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/success.txt", HTTP_ANY, handleCaptivePortalProbe);
+  server.on("/canonical.html", HTTP_ANY, handleCaptivePortalProbe);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/reset", HTTP_POST, handleFactoryReset);
   server.on("/export", HTTP_GET, []() {
@@ -1503,50 +1626,34 @@ void configureRoutes() {
           return;
         }
 
+        const bool uploadSeen = gImportUploadSeen;
         if (gImportTooLarge) {
           sendConfigPage("Import failed: file too large.");
-          gImportYaml = "";
-          gImportTooLarge = false;
+          clearImportState();
           return;
         }
 
-        if (gImportYaml.length() == 0) {
-          sendConfigPage("Import failed: empty YAML file.");
-          gImportTooLarge = false;
+        String importYaml = server.hasArg("config_yaml") ? server.arg("config_yaml") : String();
+        importYaml = normalizeImportedYaml(importYaml);
+        if (importYaml.length() == 0 && uploadSeen) {
+          importYaml = gImportYaml;
+        }
+
+        String importErr;
+        if (!applyImportedYaml(importYaml, importErr)) {
+          sendConfigPage(importErr.c_str());
+          clearImportState();
           return;
         }
 
-        RuntimeConfig next = *gCfg;
-        String parseErr;
-        if (!parseYamlConfig(gImportYaml, next, parseErr)) {
-          String msg = "Import failed: ";
-          msg += parseErr;
-          sendConfigPage(msg.c_str());
-          gImportYaml = "";
-          gImportTooLarge = false;
-          return;
-        }
-
-        if (!runtimeConfigSave(next)) {
-          sendConfigPage("Import failed: could not save config.");
-          gImportYaml = "";
-          gImportTooLarge = false;
-          return;
-        }
-
-        *gCfg = next;
-        if (gOnSave) {
-          gOnSave();
-        }
-        gImportYaml = "";
-        gImportTooLarge = false;
+        clearImportState();
         sendConfigPageAndReboot("Import successful. Rebooting now...");
       },
       []() {
         HTTPUpload& upload = server.upload();
         if (upload.status == UPLOAD_FILE_START) {
-          gImportYaml = "";
-          gImportTooLarge = false;
+          clearImportState();
+          gImportUploadSeen = true;
         } else if (upload.status == UPLOAD_FILE_WRITE) {
           if ((gImportYaml.length() + upload.currentSize) <= kMaxImportYamlBytes) {
             for (size_t i = 0; i < upload.currentSize; ++i) {
@@ -1572,6 +1679,15 @@ void configureRoutes() {
     json += "\"}";
     server.send(200, "application/json", json);
   });
+  server.onNotFound([]() {
+    if (gApMode && server.method() == HTTP_GET) {
+      server.sendHeader("Location", String("http://") + gIpBuf, true);
+      server.send(302, "text/plain", "");
+      return;
+    }
+
+    server.send(404, "text/plain", "Not found");
+  });
 }
 }  // namespace
 
@@ -1589,12 +1705,14 @@ bool webConfigBegin(RuntimeConfig* cfg, WebConfigSaveCb onSave) {
 
   if (connectStation()) {
     updateIpBuffer();
+    stopCaptivePortalDns();
   } else {
     gApMode = true;
     if (!startAccessPoint()) {
       return false;
     }
     updateIpBuffer();
+    startCaptivePortalDns();
   }
 
   configureRoutes();
@@ -1609,6 +1727,7 @@ void webConfigEnd() {
   }
 
   server.stop();
+  stopCaptivePortalDns();
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
 
@@ -1635,11 +1754,16 @@ void webConfigLoop() {
         if (startAccessPoint()) {
           gApMode = true;
           updateIpBuffer();
+          startCaptivePortalDns();
           Serial.printf("[WEB] AP fallback active: SSID=%s URL=http://%s\n", gApSsid, gIpBuf);
         }
         gStaLostSinceMs = 0;
       }
     }
+  }
+
+  if (gApMode && gDnsRunning) {
+    dnsServer.processNextRequest();
   }
 
   server.handleClient();

@@ -27,7 +27,7 @@ echo "Updated VERSION to $TAG"
 
 # Build firmware
 echo "Building firmware..."
-~/.platformio/penv/bin/pio run
+~/.platformio/penv/bin/pio run -e heltec-v4-tft
 echo "Build successful."
 
 # Commit and push all changes
@@ -45,5 +45,18 @@ fi
 git tag "$TAG"
 git push origin "$TAG"
 
-echo "Tag $TAG pushed. GitHub Actions will build and create the draft release."
-echo "https://github.com/oumike/daisy-aprs/actions"
+if command -v gh >/dev/null 2>&1; then
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        echo "GitHub release $TAG already exists."
+    else
+        gh release create "$TAG" --draft --generate-notes --title "$TAG"
+        echo "Draft GitHub release created for $TAG."
+    fi
+
+    echo "Publish the draft release to trigger the GitHub Actions build."
+else
+    echo "Tag $TAG pushed."
+    echo "Create and publish a GitHub release for $TAG to trigger the GitHub Actions build."
+fi
+
+echo "https://github.com/oumike/daisy-aprs/releases"
