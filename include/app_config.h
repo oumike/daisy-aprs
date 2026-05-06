@@ -6,6 +6,8 @@
 #define APP_VERSION "dev"
 #endif
 
+// Compile-time defaults for firmware behavior. Runtime values can override many
+// of these via persisted RuntimeConfig settings.
 namespace AppConfig {
 static constexpr const char* kVersion = APP_VERSION;
 // Replace these with your real station values.

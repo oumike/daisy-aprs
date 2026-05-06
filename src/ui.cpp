@@ -23,19 +23,12 @@ struct LogEntry {
   uint32_t timestampMs;
 };
 
-struct ConversationEntry {
-  String peer;
-  String preview;
-  uint8_t unreadCount;
-};
-
 TFT_eSPI& tft = *([]() -> TFT_eSPI* {
   static TFT_eSPI instance;
   return &instance;
 })();
 
 constexpr int kMaxRxEntries = 64;
-constexpr int kMaxConversations = 16;
 constexpr int kRxPanelX = 8;
 constexpr int kRxPanelY = 68;
 constexpr int kRxPanelH = 132;
@@ -50,7 +43,7 @@ constexpr int kLogDetailBackY = 173;
 constexpr int kLogDetailBackW = 124;
 constexpr int kLogDetailBackH = 22;
 constexpr int kScreenToggleButtonW = 84;
-constexpr int kScreenToggleButtonH = 16;
+constexpr int kScreenToggleButtonH = 24;
 constexpr int kScreenToggleButtonX = 320 - kScreenToggleButtonW - 14;
 constexpr int kScreenToggleButtonY = 34;
 
@@ -75,12 +68,6 @@ bool gpsHasFix = false;
 int gpsSatellites = 0;
 float gpsSpeed = 0.0f;
 UI::Screen activeScreen = UI::Screen::Main;
-ConversationEntry conversationEntries[kMaxConversations];
-int conversationCount = 0;
-bool composerActive = false;
-bool composerEnteringMessage = false;
-String composerCallsign;
-String composerMessage;
 String deviceCallsign = "N0CALL-7";
 String firmwareVersion = AppConfig::kVersion;
 
@@ -140,15 +127,6 @@ String fitTextToWidth(const String& text, int maxWidthPx) {
   }
 
   return "...";
-}
-
-String summarizeConversationPreview(const String& text) {
-  String s = text;
-  s.trim();
-  if (s.length() > 29) {
-    s = s.substring(0, 29) + "...";
-  }
-  return s;
 }
 
 int maxRxScrollOffset() {
@@ -500,7 +478,7 @@ void drawScreenTag() {
   tft.setTextColor(tft.color565(112, 165, 225), TFT_BLACK);
   tft.setTextDatum(TR_DATUM);
   if (activeScreen == UI::Screen::Conversations) {
-    tft.drawString("LOG", tft.width() - 14, 14);
+    tft.drawString("MESSAGES", tft.width() - 14, 14);
   } else {
     tft.drawString("MAIN", tft.width() - 14, 14);
   }
@@ -513,10 +491,40 @@ void drawScreenTag() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextFont(1);
   tft.setTextColor(TFT_WHITE, tft.color565(20, 44, 74));
-  tft.drawString(activeScreen == UI::Screen::Main ? "GO LOG" : "GO MAIN",
+  tft.drawString(activeScreen == UI::Screen::Main ? "MESSAGES" : "MAIN",
                  kScreenToggleButtonX + (kScreenToggleButtonW / 2),
                  kScreenToggleButtonY + (kScreenToggleButtonH / 2));
   tft.setTextDatum(TL_DATUM);
+}
+
+struct MainSectionData {
+  const char* title;
+  const char* emptyText;
+  bool hasData;
+  int titleY;
+  int metaY;
+  int lineY;
+  char meta[40];
+  String line;
+};
+
+void drawMainSection(const MainSectionData& section, int messageX) {
+  tft.setTextFont(2);
+  tft.setTextColor(tft.color565(160, 220, 255), tft.color565(4, 10, 20));
+  tft.drawString(section.title, 16, section.titleY);
+
+  tft.setTextFont(1);
+  if (section.hasData) {
+    tft.setTextColor(tft.color565(115, 145, 190), tft.color565(4, 10, 20));
+    tft.drawString(section.meta, 16, section.metaY);
+
+    tft.setTextColor(TFT_WHITE, tft.color565(4, 10, 20));
+    tft.drawString(section.line, messageX, section.lineY);
+    return;
+  }
+
+  tft.setTextColor(tft.color565(150, 170, 200), tft.color565(4, 10, 20));
+  tft.drawString(section.emptyText, 16, section.lineY - 1);
 }
 
 void drawMainScreen() {
@@ -533,61 +541,34 @@ void drawMainScreen() {
     return;
   }
 
-  tft.setTextFont(2);
-  tft.setTextColor(tft.color565(160, 220, 255), tft.color565(4, 10, 20));
-  tft.drawString("LAST RX", 16, kRxTitleY);
+  MainSectionData topSection = {"LAST TX", "No transmission sent yet", false, kRxTitleY, 92,
+                                105,       {0},                       ""};
+  MainSectionData bottomSection = {"LAST RX", "No packets received yet", false, 126, 144,
+                                   157,       {0},                     ""};
 
-  tft.setTextFont(1);
-  tft.setTextColor(tft.color565(120, 150, 188), tft.color565(4, 10, 20));
-  tft.setTextDatum(TR_DATUM);
-  tft.setTextDatum(TL_DATUM);
+  if (hasLastTx) {
+    const uint32_t ageSec = (now - lastTxTimestampMs) / 1000;
+    snprintf(topSection.meta, sizeof(topSection.meta), "%lus ago", static_cast<unsigned long>(ageSec));
+    topSection.line = fitTextToWidth(lastTxText, messageW);
+    topSection.hasData = true;
+  }
+
+  drawMainSection(topSection, messageX);
+
+  tft.drawFastHLine(14, 120, panelW - 28, tft.color565(20, 38, 58));
 
   if (rxCount > 0) {
     const RxEntry& entry = rxEntries[0];
     const uint32_t ageSec = (now - entry.timestampMs) / 1000;
 
-    char meta[36];
-    snprintf(meta, sizeof(meta), "%lus  %ddBm  %0.1fdB", static_cast<unsigned long>(ageSec),
-             entry.rssi, static_cast<float>(entry.snrTimes10) / 10.0f);
-
-    tft.setTextFont(1);
-    tft.setTextColor(tft.color565(115, 145, 190), tft.color565(4, 10, 20));
-    tft.drawString(meta, 16, 92);
-
-    tft.setTextFont(1);
-    tft.setTextColor(TFT_WHITE, tft.color565(4, 10, 20));
-    const String rxLine = fitTextToWidth(entry.text, messageW);
-    tft.drawString(rxLine, messageX, 105);
-  } else {
-    tft.setTextFont(1);
-    tft.setTextColor(tft.color565(150, 170, 200), tft.color565(4, 10, 20));
-    tft.drawString("No packets received yet", 16, 104);
+    snprintf(bottomSection.meta, sizeof(bottomSection.meta), "%lus  %ddBm  %0.1fdB",
+             static_cast<unsigned long>(ageSec), entry.rssi,
+             static_cast<float>(entry.snrTimes10) / 10.0f);
+    bottomSection.line = fitTextToWidth(entry.text, messageW);
+    bottomSection.hasData = true;
   }
 
-  tft.drawFastHLine(14, 120, panelW - 28, tft.color565(20, 38, 58));
-
-  tft.setTextFont(2);
-  tft.setTextColor(tft.color565(160, 220, 255), tft.color565(4, 10, 20));
-  tft.drawString("LAST TX", 16, 126);
-
-  if (hasLastTx) {
-    const uint32_t ageSec = (now - lastTxTimestampMs) / 1000;
-    char meta[24];
-    snprintf(meta, sizeof(meta), "%lus ago", static_cast<unsigned long>(ageSec));
-
-    tft.setTextFont(1);
-    tft.setTextColor(tft.color565(115, 145, 190), tft.color565(4, 10, 20));
-    tft.drawString(meta, 16, 144);
-
-    tft.setTextFont(1);
-    tft.setTextColor(TFT_WHITE, tft.color565(4, 10, 20));
-    const String txLine = fitTextToWidth(lastTxText, messageW);
-    tft.drawString(txLine, messageX, 157);
-  } else {
-    tft.setTextFont(1);
-    tft.setTextColor(tft.color565(150, 170, 200), tft.color565(4, 10, 20));
-    tft.drawString("No transmission sent yet", 16, 157);
-  }
+  drawMainSection(bottomSection, messageX);
 
   const int buttonX = 16;
   const int buttonY = 173;
@@ -657,13 +638,13 @@ void drawConversationsScreen() {
   tft.drawRoundRect(kRxPanelX, kRxPanelY, panelW, kRxPanelH, 10, tft.color565(45, 80, 120));
 
   if (logDetailActive) {
-    drawDetailScreen(logDetailEntry, "LOG DETAIL", panelW, now);
+    drawDetailScreen(logDetailEntry, "MESSAGE DETAIL", panelW, now);
     return;
   }
 
   tft.setTextFont(2);
   tft.setTextColor(tft.color565(160, 220, 255), tft.color565(4, 10, 20));
-  tft.drawString("LOG", 16, 74);
+  tft.drawString("MESSAGES", 16, 74);
 
   char countLabel[20];
   snprintf(countLabel, sizeof(countLabel), "%d entries", logCount);
@@ -710,7 +691,7 @@ void drawConversationsScreen() {
   if (logCount == 0) {
     tft.setTextFont(1);
     tft.setTextColor(tft.color565(150, 170, 200), tft.color565(4, 10, 20));
-    tft.drawString("No traffic logged yet", 16, 112);
+    tft.drawString("No messages yet", 16, 112);
   }
 
   tft.setTextFont(1);
@@ -855,38 +836,6 @@ void noteRxPacket(const String& packet, float rssi, float snr) {
   uiDirty = true;
 }
 
-void addConversation(const String& peer, const String& preview) {
-  if (conversationCount < kMaxConversations) {
-    ++conversationCount;
-  }
-
-  for (int i = conversationCount - 1; i > 0; --i) {
-    conversationEntries[i] = conversationEntries[i - 1];
-  }
-
-  conversationEntries[0].peer = peer;
-  conversationEntries[0].preview = summarizeConversationPreview(preview);
-  conversationEntries[0].unreadCount = 0;
-  uiDirty = true;
-}
-
-void setConversationComposer(bool active,
-                            bool enteringMessage,
-                            const String& callsign,
-                            const String& message) {
-  const bool changed = (composerActive != active) || (composerEnteringMessage != enteringMessage) ||
-                       (composerCallsign != callsign) || (composerMessage != message);
-  if (!changed) {
-    return;
-  }
-
-  composerActive = active;
-  composerEnteringMessage = enteringMessage;
-  composerCallsign = callsign;
-  composerMessage = summarizeConversationPreview(message);
-  uiDirty = true;
-}
-
 void scrollLogNewer() { setRxScrollOffset(logScrollOffset - 1); }
 
 void scrollLogOlder() { setRxScrollOffset(logScrollOffset + 1); }
@@ -897,6 +846,24 @@ void scrollLogPageOlder() { setRxScrollOffset(logScrollOffset + kLogVisibleRows)
 
 void resetLogScroll() { setRxScrollOffset(0); }
 
+void setMainDetailFromTx() {
+  mainDetailEntry.text = lastTxText;
+  mainDetailEntry.isTx = true;
+  mainDetailEntry.hasRfMeta = false;
+  mainDetailEntry.rssi = 0;
+  mainDetailEntry.snrTimes10 = 0;
+  mainDetailEntry.timestampMs = lastTxTimestampMs;
+}
+
+void setMainDetailFromRx(const RxEntry& entry) {
+  mainDetailEntry.text = entry.text;
+  mainDetailEntry.isTx = false;
+  mainDetailEntry.hasRfMeta = true;
+  mainDetailEntry.rssi = entry.rssi;
+  mainDetailEntry.snrTimes10 = entry.snrTimes10;
+  mainDetailEntry.timestampMs = entry.timestampMs;
+}
+
 bool openMainDetailAt(int16_t x, int16_t y) {
   if (activeScreen != Screen::Main || mainDetailActive) {
     return false;
@@ -906,29 +873,20 @@ bool openMainDetailAt(int16_t x, int16_t y) {
   const int messageX = 16;
   const int messageW = panelW - 30;
 
-  const bool inRxLine = (x >= messageX && x < (messageX + messageW) && y >= 100 && y < 116);
-  const bool inTxLine = (x >= messageX && x < (messageX + messageW) && y >= 152 && y < 168);
+  const bool inTopLine = (x >= messageX && x < (messageX + messageW) && y >= 100 && y < 116);
+  const bool inBottomLine =
+    (x >= messageX && x < (messageX + messageW) && y >= 152 && y < 168);
 
-  if (inRxLine && rxCount > 0) {
-    const RxEntry& entry = rxEntries[0];
-    mainDetailEntry.text = entry.text;
-    mainDetailEntry.isTx = false;
-    mainDetailEntry.hasRfMeta = true;
-    mainDetailEntry.rssi = entry.rssi;
-    mainDetailEntry.snrTimes10 = entry.snrTimes10;
-    mainDetailEntry.timestampMs = entry.timestampMs;
+  if (inTopLine && hasLastTx) {
+    setMainDetailFromTx();
     mainDetailActive = true;
     uiDirty = true;
     return true;
   }
 
-  if (inTxLine && hasLastTx) {
-    mainDetailEntry.text = lastTxText;
-    mainDetailEntry.isTx = true;
-    mainDetailEntry.hasRfMeta = false;
-    mainDetailEntry.rssi = 0;
-    mainDetailEntry.snrTimes10 = 0;
-    mainDetailEntry.timestampMs = lastTxTimestampMs;
+  if (inBottomLine && rxCount > 0) {
+    const RxEntry& entry = rxEntries[0];
+    setMainDetailFromRx(entry);
     mainDetailActive = true;
     uiDirty = true;
     return true;

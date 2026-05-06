@@ -13,6 +13,7 @@
 #include "web_config.h"
 
 namespace {
+// Global singletons for radio/GPS peripherals on this board.
 SPIClass radioSpi(HSPI);
 SX1262 radio = new Module(BoardPins::RADIO_CS, BoardPins::RADIO_DIO1, BoardPins::RADIO_RST,
                           BoardPins::RADIO_BUSY, radioSpi);
@@ -35,7 +36,7 @@ constexpr int16_t kUiScreenWidth = 320;
 constexpr int16_t kUiScreenHeight = 240;
 constexpr int16_t kMainPanelW = kUiScreenWidth - 16;
 constexpr int16_t kScreenToggleButtonW = 84;
-constexpr int16_t kScreenToggleButtonH = 16;
+constexpr int16_t kScreenToggleButtonH = 24;
 constexpr int16_t kScreenToggleButtonX = kUiScreenWidth - kScreenToggleButtonW - 14;
 constexpr int16_t kScreenToggleButtonY = 34;
 constexpr int16_t kActionButtonGap = 4;
@@ -140,6 +141,29 @@ void noteUserActivity();
 void maybeHandleScreenTimeout();
 void initWakeButton();
 void pollWakeButton();
+void updateWebSelfPosition();
+
+void showMainScreen(const char* logMessage = nullptr) {
+  UI::showScreen(UI::Screen::Main);
+  UI::render(true);
+  if (logMessage) {
+    Serial.println(logMessage);
+  }
+}
+
+void showMessagesScreen(const char* logMessage = nullptr) {
+  UI::showScreen(UI::Screen::Conversations);
+  UI::render(true);
+  if (logMessage) {
+    Serial.println(logMessage);
+  }
+}
+
+void applyMessageScroll(void (*scrollFn)(), const char* logMessage) {
+  scrollFn();
+  UI::render(true);
+  Serial.println(logMessage);
+}
 
 void setDisplayBacklight(bool on) {
   if (BoardPins::TFT_BACKLIGHT_PIN >= 0) {
@@ -269,6 +293,22 @@ void updateWifiUiStateFromSystem() {
   const bool uiConnected = webRunning ? !webApMode : (apMode || staConnected || hasRealStaIp);
 
   UI::setWifiState(uiConnected, uiApMode);
+}
+
+void updateWebSelfPosition() {
+  if (gps.location.isValid()) {
+    webConfigSetSelfPosition(true, gps.location.lat(), gps.location.lng());
+    return;
+  }
+
+  if (gRuntimeCfg.allowManualPosition) {
+    const double lat = static_cast<double>(gRuntimeCfg.manualLatE7) / 1e7;
+    const double lon = static_cast<double>(gRuntimeCfg.manualLonE7) / 1e7;
+    webConfigSetSelfPosition(true, lat, lon);
+    return;
+  }
+
+  webConfigSetSelfPosition(false, 0.0, 0.0);
 }
 
 int readTouchRaw(uint8_t* buffer, uint8_t length) {
@@ -676,6 +716,17 @@ bool isWxButtonTouch(int16_t x, int16_t y) {
          y < (kWxButtonY + kWxButtonH);
 }
 
+bool handleScreenToggleTouch(int16_t x, int16_t y) {
+  if (!isScreenToggleButtonTouch(x, y)) {
+    return false;
+  }
+
+  UI::nextScreen();
+  Serial.println("[UI] touch: toggle main/messages");
+  UI::render();
+  return true;
+}
+
 bool handleMainScreenTouch(int16_t x, int16_t y) {
   if (UI::isMainDetailActive()) {
     if (UI::handleMainDetailTouch(x, y)) {
@@ -685,10 +736,7 @@ bool handleMainScreenTouch(int16_t x, int16_t y) {
     return false;
   }
 
-  if (isScreenToggleButtonTouch(x, y)) {
-    UI::nextScreen();
-    Serial.println("[UI] touch: toggle main/log");
-    UI::render();
+  if (handleScreenToggleTouch(x, y)) {
     return false;
   }
 
@@ -749,28 +797,25 @@ bool handleMainScreenTouch(int16_t x, int16_t y) {
 bool handleLogScreenTouch(int16_t x, int16_t y) {
   if (UI::isLogDetailActive()) {
     if (UI::handleLogDetailTouch(x, y)) {
-      Serial.println("[UI] touch: close log detail");
+      Serial.println("[UI] touch: close message detail");
       UI::render();
       return false;
     }
     return false;
   }
 
-  if (isScreenToggleButtonTouch(x, y)) {
-    UI::nextScreen();
-    Serial.println("[UI] touch: toggle main/log");
-    UI::render();
+  if (handleScreenToggleTouch(x, y)) {
     return false;
   }
 
   if (UI::handleLogScrollButtonTouch(x, y)) {
-    Serial.println("[UI] touch: log scroll button");
+    Serial.println("[UI] touch: message scroll button");
     UI::render();
     return false;
   }
 
   if (UI::openLogDetailAt(x, y)) {
-    Serial.println("[UI] touch: open log detail");
+    Serial.println("[UI] touch: open message detail");
     UI::render();
     return false;
   }
@@ -778,10 +823,10 @@ bool handleLogScreenTouch(int16_t x, int16_t y) {
   if (y > (kUiScreenHeight - 36)) {
     if (x < (kUiScreenWidth / 2)) {
       UI::scrollLogPageNewer();
-      Serial.println("[UI] touch: log page newer");
+      Serial.println("[UI] touch: message page newer");
     } else {
       UI::scrollLogPageOlder();
-      Serial.println("[UI] touch: log page older");
+      Serial.println("[UI] touch: message page older");
     }
     UI::render();
     return false;
@@ -789,10 +834,10 @@ bool handleLogScreenTouch(int16_t x, int16_t y) {
 
   if (x < (kUiScreenWidth / 2)) {
     UI::scrollLogNewer();
-    Serial.println("[UI] touch: log newer");
+    Serial.println("[UI] touch: message newer");
   } else {
     UI::scrollLogOlder();
-    Serial.println("[UI] touch: log older");
+    Serial.println("[UI] touch: message older");
   }
   UI::render();
   return false;
@@ -885,9 +930,7 @@ void openConversationsFromMain() {
     return;
   }
 
-  UI::showScreen(UI::Screen::Conversations);
-  UI::render(true);
-  Serial.println("[UI] opened LOG screen");
+  showMessagesScreen("[UI] opened MESSAGES screen");
 }
 
 void openMainFromConversations() {
@@ -895,9 +938,7 @@ void openMainFromConversations() {
     return;
   }
 
-  UI::showScreen(UI::Screen::Main);
-  UI::render(true);
-  Serial.println("[UI] LOG -> Main screen");
+  showMainScreen("[UI] MESSAGES -> Main screen");
 }
 
 bool initRadio() {
@@ -1053,20 +1094,13 @@ void handleRadioRx() {
     const String aprs = payload.substring(3);
     Serial.printf("[RX] RSSI %.1f SNR %.1f | %s\n", rssi, snr, aprs.c_str());
     UI::noteRxPacket(aprs, rssi, snr);
+    webConfigNoteHeardPacket(aprs, rssi, snr);
   } else {
     Serial.printf("[RX] RSSI %.1f SNR %.1f | raw(%d bytes)\n", rssi, snr, payload.length());
     UI::noteRxPacket(String("raw(") + payload.length() + " bytes)", rssi, snr);
   }
 
   radio.startReceive();
-}
-
-String buildCurrentBeacon() {
-  return AprsCodec::buildPositionPacket(
-      String(gRuntimeCfg.callsign), String(gRuntimeCfg.destination), String(gRuntimeCfg.path),
-      gps.location.lat(), gps.location.lng(), gps.course.deg(), gps.speed.knots(),
-      static_cast<long>(gps.altitude.feet()), gRuntimeCfg.symbolTable, gRuntimeCfg.symbol,
-      String(gRuntimeCfg.comment));
 }
 
 String buildAprsMessagePacket(const String& addressee, const String& messageText) {
@@ -1262,14 +1296,14 @@ void handleSerialLine(const String& line) {
     Serial.println("  battery debug        Show detailed battery math and curve interpolation");
     Serial.println("  web                  Show web config URL and mode");
     Serial.println("  beacon               Send APRS beacon now (if GPS fix is valid)");
-    Serial.println("  c                    Toggle Main and LOG screens");
-    Serial.println("  screen next|prev     Switch between Main and LOG");
-    Serial.println("  screen main|log      Jump to a specific screen");
+    Serial.println("  c                    Toggle Main and MESSAGES screens");
+    Serial.println("  screen next|prev     Switch between Main and MESSAGES");
+    Serial.println("  screen main|messages Jump to a specific screen");
     Serial.println("  enter                On Main screen: send beacon now");
     Serial.println("  tx <TNC2_PACKET>     Send a raw APRS packet");
-    Serial.println("  scroll newer|older   Scroll LOG by one entry");
-    Serial.println("  scroll pageup|pagedown  Scroll LOG by one page");
-    Serial.println("  scroll top           Jump LOG to newest entry");
+    Serial.println("  scroll newer|older   Scroll MESSAGES by one entry");
+    Serial.println("  scroll pageup|pagedown  Scroll MESSAGES by one page");
+    Serial.println("  scroll top           Jump MESSAGES to newest entry");
     return;
   }
 
@@ -1332,17 +1366,14 @@ void handleSerialLine(const String& line) {
   }
 
   if (line == "screen main") {
-    UI::showScreen(UI::Screen::Main);
-    UI::render(true);
-    Serial.println("[UI] switched to Main screen");
+    showMainScreen("[UI] switched to Main screen");
     return;
   }
 
-  if (line == "screen log" || line == "screen logs" || line == "screen convos" ||
+  if (line == "screen log" || line == "screen logs" || line == "screen message" ||
+      line == "screen messages" || line == "screen convos" ||
       line == "screen conversations") {
-    UI::showScreen(UI::Screen::Conversations);
-    UI::render(true);
-    Serial.println("[UI] switched to LOG screen");
+    showMessagesScreen("[UI] switched to MESSAGES screen");
     return;
   }
 
@@ -1350,7 +1381,7 @@ void handleSerialLine(const String& line) {
     if (UI::currentScreen() == UI::Screen::Main) {
       sendBeaconNow();
     } else {
-      Serial.println("[UI] enter has no action on LOG screen");
+      Serial.println("[UI] enter has no action on MESSAGES screen");
     }
     return;
   }
@@ -1366,37 +1397,27 @@ void handleSerialLine(const String& line) {
   }
 
   if (line == "scroll newer" || line == "scroll up") {
-    UI::scrollLogNewer();
-    UI::render(true);
-    Serial.println("[UI] LOG scrolled newer");
+    applyMessageScroll(UI::scrollLogNewer, "[UI] MESSAGES scrolled newer");
     return;
   }
 
   if (line == "scroll older" || line == "scroll down") {
-    UI::scrollLogOlder();
-    UI::render(true);
-    Serial.println("[UI] LOG scrolled older");
+    applyMessageScroll(UI::scrollLogOlder, "[UI] MESSAGES scrolled older");
     return;
   }
 
   if (line == "scroll pageup") {
-    UI::scrollLogPageNewer();
-    UI::render(true);
-    Serial.println("[UI] LOG page newer");
+    applyMessageScroll(UI::scrollLogPageNewer, "[UI] MESSAGES page newer");
     return;
   }
 
   if (line == "scroll pagedown") {
-    UI::scrollLogPageOlder();
-    UI::render(true);
-    Serial.println("[UI] LOG page older");
+    applyMessageScroll(UI::scrollLogPageOlder, "[UI] MESSAGES page older");
     return;
   }
 
   if (line == "scroll top") {
-    UI::resetLogScroll();
-    UI::render(true);
-    Serial.println("[UI] LOG reset to newest");
+    applyMessageScroll(UI::resetLogScroll, "[UI] MESSAGES reset to newest");
     return;
   }
 
@@ -1511,6 +1532,7 @@ void loop() {
     const int sats = gps.satellites.isValid() ? gps.satellites.value() : 0;
     const float speed = gps.speed.isValid() ? gps.speed.kmph() : 0.0f;
     UI::setGpsState(gpsValid, sats, speed);
+    updateWebSelfPosition();
     updateWifiUiStateFromSystem();
     lastUiGpsUpdateMs = now;
   }

@@ -1,7 +1,6 @@
 #include "runtime_config.h"
 
 #include <Preferences.h>
-#include <math.h>
 
 #include "app_config.h"
 
