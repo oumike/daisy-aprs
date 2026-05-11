@@ -1535,15 +1535,38 @@ void startCaptivePortalDns() {
   gDnsRunning = true;
 }
 
+bool setWifiModeWithRetry(wifi_mode_t mode, const char* modeName) {
+  constexpr int kMaxAttempts = 2;
+  for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+    if (WiFi.mode(mode)) {
+      return true;
+    }
+
+    Serial.printf("[WEB] Wi-Fi mode %s failed (attempt %d/%d)\n", modeName, attempt,
+                  kMaxAttempts);
+    WiFi.mode(WIFI_OFF);
+    delay(120);
+  }
+
+  return false;
+}
+
 bool connectStation() {
   if (!gCfg || gCfg->wifiSsid[0] == '\0') {
     return false;
   }
 
   WiFi.persistent(false);
-  WiFi.disconnect(true);
-  delay(120);
-  WiFi.mode(WIFI_STA);
+
+  if (!setWifiModeWithRetry(WIFI_STA, "STA")) {
+    Serial.println("[WEB] unable to initialize STA mode");
+    return false;
+  }
+
+  // Clear stale credentials while keeping the driver initialized.
+  WiFi.disconnect(false, true);
+  delay(80);
+
   WiFi.setSleep(false);
   WiFi.begin(gCfg->wifiSsid, gCfg->wifiPass);
 
@@ -1556,10 +1579,8 @@ bool connectStation() {
     return true;
   }
 
-  // Ensure the AP fallback starts from a clean state.
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  delay(120);
+  WiFi.disconnect(false, true);
+  delay(80);
   return false;
 }
 
@@ -1572,13 +1593,15 @@ bool startAccessPoint() {
 
   for (int attempt = 0; attempt < 3; ++attempt) {
     WiFi.softAPdisconnect(true);
-    WiFi.disconnect(true);
-    delay(100);
-    WiFi.mode(WIFI_OFF);
-    delay(120);
+    WiFi.disconnect(false, true);
+    delay(80);
 
-    WiFi.mode(WIFI_AP);
-    delay(150);
+    if (!setWifiModeWithRetry(WIFI_AP, "AP")) {
+      delay(120);
+      continue;
+    }
+
+    delay(120);
     WiFi.setSleep(false);
     WiFi.softAPConfig(apIp, apGw, apMask);
 
@@ -1728,8 +1751,11 @@ void webConfigEnd() {
 
   server.stop();
   stopCaptivePortalDns();
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_OFF);
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.softAPdisconnect(true);
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+  }
 
   gRunning = false;
   gApMode = false;

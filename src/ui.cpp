@@ -1,10 +1,14 @@
 #include "ui.h"
 
 #include <SPI.h>
+#ifndef TOUCH_CS
+#define TOUCH_CS -1
+#endif
 #include <TFT_eSPI.h>
 #include <math.h>
 
 #include "app_config.h"
+#include "board_pins.h"
 
 namespace {
 struct RxEntry {
@@ -85,6 +89,7 @@ uint32_t lastRenderMs = 0;
 bool uiDirty = true;
 bool uiLayoutDirty = true;
 UI::TouchButton flashedButton = UI::TouchButton::None;
+UI::TouchButton forcedMainActionPressed = UI::TouchButton::None;
 uint32_t flashButtonUntilMs = 0;
 constexpr uint32_t kTouchFlashDurationMs = 220;
 
@@ -580,26 +585,34 @@ void drawMainScreen() {
   const int thursButtonX = aprsphButtonX + buttonW + buttonGap;
   const int wxButtonX = thursButtonX + buttonW + buttonGap;
 
-    const bool beaconPressed = isButtonFlashing(UI::TouchButton::Beacon, now);
-    const bool testPressed = isButtonFlashing(UI::TouchButton::Test, now);
-    const bool aprsphPressed = isButtonFlashing(UI::TouchButton::Aprsph, now);
-    const bool thursPressed = isButtonFlashing(UI::TouchButton::Thurs, now);
-    const bool wxPressed = isButtonFlashing(UI::TouchButton::Wx, now);
+    const bool beaconPressed = (forcedMainActionPressed == UI::TouchButton::Beacon) ||
+                   isButtonFlashing(UI::TouchButton::Beacon, now);
+    const bool testPressed = (forcedMainActionPressed == UI::TouchButton::Test) ||
+                 isButtonFlashing(UI::TouchButton::Test, now);
+    const bool aprsphPressed = (forcedMainActionPressed == UI::TouchButton::Aprsph) ||
+                   isButtonFlashing(UI::TouchButton::Aprsph, now);
+    const bool thursPressed = (forcedMainActionPressed == UI::TouchButton::Thurs) ||
+                  isButtonFlashing(UI::TouchButton::Thurs, now);
+    const bool wxPressed = (forcedMainActionPressed == UI::TouchButton::Wx) ||
+                 isButtonFlashing(UI::TouchButton::Wx, now);
 
-    const uint16_t beaconBg = beaconPressed ? tft.color565(170, 30, 30) : tft.color565(30, 92, 145);
+    const uint16_t pressedFill = tft.color565(224, 80, 80);
+    const uint16_t pressedBorder = TFT_WHITE;
+
+    const uint16_t beaconBg = beaconPressed ? pressedFill : tft.color565(20, 44, 74);
     const uint16_t beaconBorder =
-      beaconPressed ? tft.color565(255, 138, 138) : tft.color565(98, 184, 255);
-    const uint16_t testBg = testPressed ? tft.color565(170, 30, 30) : tft.color565(98, 72, 26);
+      beaconPressed ? pressedBorder : tft.color565(90, 165, 234);
+    const uint16_t testBg = testPressed ? pressedFill : tft.color565(20, 44, 74);
     const uint16_t testBorder =
-      testPressed ? tft.color565(255, 138, 138) : tft.color565(255, 188, 90);
-    const uint16_t aprsphBg = aprsphPressed ? tft.color565(170, 30, 30) : tft.color565(34, 88, 56);
+      testPressed ? pressedBorder : tft.color565(90, 165, 234);
+    const uint16_t aprsphBg = aprsphPressed ? pressedFill : tft.color565(20, 44, 74);
     const uint16_t aprsphBorder =
-      aprsphPressed ? tft.color565(255, 138, 138) : tft.color565(118, 214, 162);
-    const uint16_t thursBg = thursPressed ? tft.color565(170, 30, 30) : tft.color565(66, 64, 20);
+      aprsphPressed ? pressedBorder : tft.color565(90, 165, 234);
+    const uint16_t thursBg = thursPressed ? pressedFill : tft.color565(20, 44, 74);
     const uint16_t thursBorder =
-      thursPressed ? tft.color565(255, 138, 138) : tft.color565(244, 215, 106);
-    const uint16_t wxBg = wxPressed ? tft.color565(170, 30, 30) : tft.color565(78, 52, 24);
-    const uint16_t wxBorder = wxPressed ? tft.color565(255, 138, 138) : tft.color565(226, 178, 112);
+      thursPressed ? pressedBorder : tft.color565(90, 165, 234);
+    const uint16_t wxBg = wxPressed ? pressedFill : tft.color565(20, 44, 74);
+    const uint16_t wxBorder = wxPressed ? pressedBorder : tft.color565(90, 165, 234);
 
     tft.fillRoundRect(buttonX, buttonY, buttonW, buttonH, 7, beaconBg);
     tft.drawRoundRect(buttonX, buttonY, buttonW, buttonH, 7, beaconBorder);
@@ -705,8 +718,7 @@ namespace UI {
 
 void begin() {
   tft.init();
-  // Flipped landscape so the hardware button side is reversed.
-  tft.setRotation(3);
+  tft.setRotation(BoardPins::TFT_ROTATION);
   tft.setSwapBytes(true);
 }
 
@@ -993,9 +1005,19 @@ void previousScreen() { nextScreen(); }
 
 Screen currentScreen() { return activeScreen; }
 
-void flashButton(TouchButton button) {
+void setMainActionPressed(TouchButton button) {
+  if (forcedMainActionPressed != button) {
+    forcedMainActionPressed = button;
+    uiDirty = true;
+  }
+}
+
+void flashButton(TouchButton button, uint32_t durationMs) {
+  if (durationMs == 0) {
+    durationMs = kTouchFlashDurationMs;
+  }
   flashedButton = button;
-  flashButtonUntilMs = millis() + kTouchFlashDurationMs;
+  flashButtonUntilMs = millis() + durationMs;
   uiDirty = true;
 }
 

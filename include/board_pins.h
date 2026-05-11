@@ -37,6 +37,9 @@ constexpr int TOUCH_RST = 44;
 constexpr int WAKE_BUTTON = 35;
 constexpr int WAKE_BUTTON_ACTIVE = LOW;
 
+// Display rotation used by UI rendering.
+constexpr int TFT_ROTATION = 3;
+
 // Battery sense (voltage divider into ADC).
 // Heltec WiFi LoRa 32 V4 battery read path uses GPIO1 with an ADC gate on GPIO37.
 constexpr int BATTERY_ADC = 1;
